@@ -4,6 +4,7 @@ import org.json.*;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
+import java.util.*;
 
 public final class OpenAICompatibleTranslator {
     private static final int MAX_ATTEMPTS = 3;
@@ -12,9 +13,8 @@ public final class OpenAICompatibleTranslator {
         if(c.endpoint==null||c.endpoint.trim().isEmpty()) throw new IllegalArgumentException("Chưa cấu hình AI endpoint");
         if(c.model==null||c.model.trim().isEmpty()) throw new IllegalArgumentException("Chưa cấu hình model");
 
-        String endpoint = normalizeEndpoint(c.endpoint);
-        boolean responsesApi = endpoint.endsWith("/responses");
-
+        String normalized = normalizeEndpoint(c.endpoint);
+        boolean responsesApi = normalized.endsWith("/responses");
         String system="You are a medical book translator specializing in obstetric and gynecologic ultrasound and fetal medicine. Translate English to professional Vietnamese. Preserve meaning, numbers, units, abbreviations, citations, HTML/XML tags, entities and inline markup exactly. Do not add explanations. Return only the translated content. Do not translate URLs, file names, CSS classes, IDs, reference numbers or abbreviations unless they are ordinary prose.";
         String userText="Context:\n"+context+"\n\nText to translate:\n"+source;
 
@@ -34,74 +34,104 @@ public final class OpenAICompatibleTranslator {
         }
 
         byte[] payload=body.toString().getBytes(StandardCharsets.UTF_8);
+        List<String> endpoints=endpointCandidates(normalized);
         IOException lastIo=null;
 
-        for(int attempt=1;attempt<=MAX_ATTEMPTS;attempt++) {
-            HttpURLConnection h=null;
-            try {
-                h=(HttpURLConnection)new URL(endpoint).openConnection();
-                h.setRequestMethod("POST");
-                h.setConnectTimeout(30000);
-                h.setReadTimeout(180000);
-                h.setDoOutput(true);
-                h.setUseCaches(false);
-                h.setInstanceFollowRedirects(true);
-                h.setFixedLengthStreamingMode(payload.length);
-                h.setRequestProperty("Content-Type","application/json; charset=utf-8");
-                h.setRequestProperty("Accept","application/json");
-                h.setRequestProperty("Accept-Encoding","identity");
-                h.setRequestProperty("Connection","close");
-                h.setRequestProperty("User-Agent","MedicalBookTranslator/1.3 Android");
-                if(c.apiKey!=null&&!c.apiKey.trim().isEmpty()) h.setRequestProperty("Authorization","Bearer "+c.apiKey.trim());
-                if(endpoint.contains("openrouter.ai")) {
-                    h.setRequestProperty("HTTP-Referer","https://github.com/BasonCao/medical-book-translate");
-                    h.setRequestProperty("X-Title","Medical Book Translator");
-                }
+        for(String endpoint:endpoints) {
+            for(int attempt=1;attempt<=MAX_ATTEMPTS;attempt++) {
+                HttpURLConnection h=null;
+                try {
+                    h=(HttpURLConnection)new URL(endpoint).openConnection();
+                    h.setRequestMethod("POST");
+                    h.setConnectTimeout(30000);
+                    h.setReadTimeout(180000);
+                    h.setDoOutput(true);
+                    h.setUseCaches(false);
+                    h.setInstanceFollowRedirects(true);
+                    h.setFixedLengthStreamingMode(payload.length);
+                    h.setRequestProperty("Content-Type","application/json; charset=utf-8");
+                    h.setRequestProperty("Accept","application/json");
+                    h.setRequestProperty("Accept-Encoding","identity");
+                    h.setRequestProperty("Connection","close");
+                    h.setRequestProperty("User-Agent","MedicalBookTranslator/1.3 Android");
+                    if(c.apiKey!=null&&!c.apiKey.trim().isEmpty()) h.setRequestProperty("Authorization","Bearer "+c.apiKey.trim());
+                    if(endpoint.contains("openrouter.ai")) {
+                        h.setRequestProperty("HTTP-Referer","https://github.com/BasonCao/medical-book-translate");
+                        h.setRequestProperty("X-Title","Medical Book Translator");
+                    }
 
-                try(OutputStream os=h.getOutputStream()) {
-                    os.write(payload);
-                    os.flush();
-                }
+                    try(OutputStream os=h.getOutputStream()) {
+                        os.write(payload);
+                        os.flush();
+                    }
 
-                int code=h.getResponseCode();
-                InputStream is=code>=200&&code<300?h.getInputStream():h.getErrorStream();
-                String resp=read(is);
+                    int code=h.getResponseCode();
+                    InputStream is=code>=200&&code<300?h.getInputStream():h.getErrorStream();
+                    String resp=read(is);
 
-                if(code>=200&&code<300) {
-                    return responsesApi ? parseResponsesText(resp) : parseChatText(resp);
-                }
+                    if(code>=200&&code<300) {
+                        return responsesApi ? parseResponsesText(resp) : parseChatText(resp);
+                    }
 
-                String error=extractError(resp);
-                if((code==429 || code>=500) && attempt<MAX_ATTEMPTS) {
-                    sleepBeforeRetry(attempt);
-                    continue;
+                    String error=extractError(resp);
+                    if((code==429 || code>=500) && attempt<MAX_ATTEMPTS) {
+                        sleepBeforeRetry(attempt);
+                        continue;
+                    }
+                    throw new IOException("AI HTTP "+code+": "+error);
+                } catch(UnknownHostException e) {
+                    lastIo=e;
+                    break;
+                } catch(SocketException | EOFException e) {
+                    lastIo=e;
+                    if(attempt<MAX_ATTEMPTS) {
+                        sleepBeforeRetry(attempt);
+                        continue;
+                    }
+                    break;
+                } catch(IOException e) {
+                    lastIo=e;
+                    if(attempt<MAX_ATTEMPTS && isTransient(e)) {
+                        sleepBeforeRetry(attempt);
+                        continue;
+                    }
+                    throw e;
+                } finally {
+                    if(h!=null) h.disconnect();
                 }
-                throw new IOException("AI HTTP "+code+": "+error);
-            } catch(SocketException | EOFException e) {
-                lastIo=e;
-                if(attempt<MAX_ATTEMPTS) {
-                    sleepBeforeRetry(attempt);
-                    continue;
-                }
-                throw new IOException("Không thể kết nối tới AI provider sau "+MAX_ATTEMPTS+" lần thử. Chi tiết: "+e.getMessage(),e);
-            } catch(IOException e) {
-                lastIo=e;
-                if(attempt<MAX_ATTEMPTS && isTransient(e)) {
-                    sleepBeforeRetry(attempt);
-                    continue;
-                }
-                throw e;
-            } finally {
-                if(h!=null) h.disconnect();
             }
         }
-        throw new IOException("Kết nối AI thất bại.",lastIo);
+
+        String hostError=lastIo==null?"không xác định":lastIo.getMessage();
+        if(isOpenRouter(normalized)) {
+            throw new IOException("Không phân giải được máy chủ OpenRouter. App đã thử openrouter.ai, us.openrouter.ai và eu.openrouter.ai. Hãy kiểm tra Internet/Private DNS trên Android. Chi tiết: "+hostError,lastIo);
+        }
+        throw new IOException("Không thể kết nối tới AI provider. Chi tiết: "+hostError,lastIo);
+    }
+
+    private static boolean isOpenRouter(String endpoint) {
+        return endpoint.contains("openrouter.ai");
+    }
+
+    private static List<String> endpointCandidates(String endpoint) {
+        ArrayList<String> out=new ArrayList<>();
+        out.add(endpoint);
+        if(isOpenRouter(endpoint)) {
+            String path=endpoint.substring(endpoint.indexOf(".ai")+3);
+            addUnique(out,"https://us.openrouter.ai"+path);
+            addUnique(out,"https://eu.openrouter.ai"+path);
+        }
+        return out;
+    }
+
+    private static void addUnique(List<String> list,String value) {
+        if(!list.contains(value)) list.add(value);
     }
 
     private static boolean isTransient(IOException e) {
         String m=e.getMessage();
         if(m==null) return false;
-        String s=m.toLowerCase(java.util.Locale.US);
+        String s=m.toLowerCase(Locale.US);
         return s.contains("connection reset")
                 || s.contains("connection aborted")
                 || s.contains("software caused connection abort")
@@ -147,9 +177,10 @@ public final class OpenAICompatibleTranslator {
 
     private static String cleanModelOutput(String s) {
         String t=s==null?"":s.trim();
-        if(t.startsWith(String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96))) {
-            t=t.replaceFirst("^"+String.valueOf((char)96)+"{3}(?:html|xml)?\\s*","");
-            t=t.replaceFirst("\\s*"+String.valueOf((char)96)+"{3}$","");
+        String fence=String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96);
+        if(t.startsWith(fence)) {
+            t=t.replaceFirst("^"+fence+"(?:html|xml)?\\s*","");
+            t=t.replaceFirst("\\s*"+fence+"$","");
         }
         return t.trim();
     }
