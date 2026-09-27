@@ -23,10 +23,13 @@ Mở thư mục này bằng Android Studio có Android SDK 35 và Gradle/AGP 8.7
 Môi trường tạo artifact hiện tại không có Android SDK/Gradle distribution nên APK chưa được build tại đây. Source project đã được kiểm tra phần EPUB engine độc lập bằng `javac`.
 
 ## AI endpoint
-App không chứa khóa API. Vào `⚙ Cấu hình AI` và nhập:
-- Endpoint: URL chat-completions tương thích OpenAI.
-- Model: tên model.
-- API key: khóa của dịch vụ.
+App hỗ trợ cả OpenAI Responses API và các endpoint chat-completions tương thích.
+Mặc định giao diện điền:
+- Endpoint: `https://api.openai.com/v1/responses`
+- Model: `gpt-5.6-luna`
+- API key: khóa API của dịch vụ.
+
+Nếu dùng provider tương thích OpenAI chỉ có Chat Completions, nhập trực tiếp endpoint kết thúc bằng `/chat/completions`; app sẽ giữ giao thức đó. Nếu nhập base URL kết thúc bằng `/v1`, app mặc định dùng `/responses`.
 
 Khuyến nghị production: dùng backend proxy riêng để API key không nằm trên thiết bị.
 
