@@ -5,6 +5,16 @@ import com.aitiniubi.medicalbooktranslator.epub.*;import com.aitiniubi.medicalbo
 import java.io.*;import java.util.*;
 
 public class MainActivity extends Activity {
+    private static final String OPENROUTER_ENDPOINT="https://openrouter.ai/api/v1/chat/completions";
+    private static final String GEMINI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+    private static final String OPENAI_ENDPOINT="https://api.openai.com/v1/responses";
+    private static final String[] PROVIDERS={"OpenRouter — FREE","Google Gemini — FREE tier","OpenAI","Custom OpenAI-compatible"};
+    private static final String[] OR_MODELS={"openrouter/free","inclusionai/ling-3.0-flash-sante:free","nvidia/nemotron-3-ultra:free","qwen/qwen3.8-27b:free","google/gemma-4-31b-it:free","google/gemma-4-26b-a4b-it:free","inclusionai/ling-3.0-flash-fin:free"};
+    private static final String[] OR_LABELS={"Auto Free Router","Ling 3.0 Flash Sante — Medical","NVIDIA Nemotron 3 Ultra — Free","Qwen 3.8 27B — Free","Gemma 4 31B — Free","Gemma 4 26B A4B — Free","Ling 3.0 Flash Fin — Free"};
+    private static final String[] GEMINI_MODELS={"gemini-3.8-flash","gemini-3.7-flash","gemini-3.6-flash","gemini-3.1-flash-lite"};
+    private static final String[] GEMINI_LABELS={"Gemini 3.8 Flash — Free tier","Gemini 3.7 Flash — Free tier","Gemini 3.6 Flash — Free tier","Gemini 3.1 Flash-Lite — Free tier"};
+    private static final String[] OPENAI_MODELS={"gpt-5.6-luna","gpt-5.6-terra","gpt-5.6-sol","gpt-5.6"};
+
     private TextView status,report; private ProgressBar progress; private Button analyze,translate,export; private File selectedFile,lastOutput; private EpubBook book;
     private android.content.SharedPreferences prefsHolder;
     @Override public void onCreate(Bundle b){super.onCreate(b);setContentView(com.aitiniubi.medicalbooktranslator.R.layout.activity_main);prefsHolder=getSharedPreferences("config",MODE_PRIVATE);
