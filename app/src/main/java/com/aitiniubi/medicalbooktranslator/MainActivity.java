@@ -26,7 +26,6 @@ public class MainActivity extends Activity {
         EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);ep.setText(savedEndpoint);
         EditText key=new EditText(this);key.setHint("API key");key.setSingleLine(true);key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);key.setText(prefsHolder.getString("apiKey",""));
         TextView note=new TextView(this);note.setTextSize(12);note.setPadding(0,12,0,0);
-        final boolean[] first={true};
         Runnable refresh=()->{String p=(String)provider.getSelectedItem();String[] ms;String[] labels;
             if(p.equals(PROVIDERS[0])){ms=OR_MODELS;labels=OR_LABELS;ep.setText(OPENROUTER_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("OpenRouter: model FREE ($0) nhưng quota/độ sẵn sàng có thể thay đổi.");}
             else if(p.equals(PROVIDERS[1])){ms=GEMINI_MODELS;labels=GEMINI_LABELS;ep.setText(GEMINI_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("Gemini: các model trong danh sách có Free Tier theo tài liệu Google hiện tại.");}
@@ -34,8 +33,6 @@ public class MainActivity extends Activity {
             else {ms=new String[]{savedModel};labels=ms;ep.setText(savedEndpoint);customModel.setText(savedModel);customModel.setVisibility(View.VISIBLE);note.setText("Nhập endpoint và model của provider OpenAI-compatible bất kỳ.");}
             model.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
             int sel=indexOf(ms,savedModel);if(sel<0)sel=0;model.setSelection(sel);model.setVisibility(p.equals(PROVIDERS[3])?View.GONE:View.VISIBLE);
-            if(!first[0]){if(p.equals(PROVIDERS[0]))savedModel="openrouter/free";else if(p.equals(PROVIDERS[1]))savedModel=GEMINI_MODELS[0];else if(p.equals(PROVIDERS[2]))savedModel=OPENAI_MODELS[0];}
-            first[0]=false;
         };
         provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){refresh.run();}public void onNothingSelected(AdapterView<?> a){}});
         refresh.run();
