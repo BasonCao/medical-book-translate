@@ -1,13 +1,27 @@
 package com.aitiniubi.medicalbooktranslator.translation;
 
 import org.json.*;
+import okhttp3.*;
+import okhttp3.dnsoverhttps.DnsOverHttps;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 public final class OpenAICompatibleTranslator {
     private static final int MAX_ATTEMPTS = 3;
+    private static final long CONNECT_TIMEOUT_SECONDS = 30;
+    private static final long READ_TIMEOUT_SECONDS = 180;
+
+    /*
+     * Android's platform resolver can fail with UnknownHostException even when
+     * Chrome can reach the same HTTPS hostname. Use DNS-over-HTTPS with
+     * bootstrap IPs so the API hostname is resolved independently, while TLS
+     * still validates the original hostname. No certificate verification is
+     * bypassed and no provider IP is hard-coded.
+     */
+    private static final OkHttpClient HTTP_CLIENT = createHttpClient();
 
     public static String translate(String source, String context, TranslationConfig c) throws Exception {
         if(c.endpoint==null||c.endpoint.trim().isEmpty()) throw new IllegalArgumentException("Chưa cấu hình AI endpoint");
@@ -39,46 +53,36 @@ public final class OpenAICompatibleTranslator {
 
         for(String endpoint:endpoints) {
             for(int attempt=1;attempt<=MAX_ATTEMPTS;attempt++) {
-                HttpURLConnection h=null;
                 try {
-                    h=(HttpURLConnection)new URL(endpoint).openConnection();
-                    h.setRequestMethod("POST");
-                    h.setConnectTimeout(30000);
-                    h.setReadTimeout(180000);
-                    h.setDoOutput(true);
-                    h.setUseCaches(false);
-                    h.setInstanceFollowRedirects(true);
-                    h.setFixedLengthStreamingMode(payload.length);
-                    h.setRequestProperty("Content-Type","application/json; charset=utf-8");
-                    h.setRequestProperty("Accept","application/json");
-                    h.setRequestProperty("Accept-Encoding","identity");
-                    h.setRequestProperty("Connection","close");
-                    h.setRequestProperty("User-Agent","MedicalBookTranslator/1.3 Android");
-                    if(c.apiKey!=null&&!c.apiKey.trim().isEmpty()) h.setRequestProperty("Authorization","Bearer "+c.apiKey.trim());
+                    RequestBody requestBody=RequestBody.create(payload, MediaType.parse("application/json; charset=utf-8"));
+                    Request.Builder rb=new Request.Builder()
+                            .url(endpoint)
+                            .post(requestBody)
+                            .header("Accept","application/json")
+                            .header("User-Agent","MedicalBookTranslator/1.3 Android");
+                    if(c.apiKey!=null&&!c.apiKey.trim().isEmpty()) {
+                        rb.header("Authorization","Bearer "+c.apiKey.trim());
+                    }
                     if(endpoint.contains("openrouter.ai")) {
-                        h.setRequestProperty("HTTP-Referer","https://github.com/BasonCao/medical-book-translate");
-                        h.setRequestProperty("X-Title","Medical Book Translator");
+                        rb.header("HTTP-Referer","https://github.com/BasonCao/medical-book-translate");
+                        rb.header("X-Title","Medical Book Translator");
                     }
 
-                    try(OutputStream os=h.getOutputStream()) {
-                        os.write(payload);
-                        os.flush();
-                    }
+                    try(Response response=HTTP_CLIENT.newCall(rb.build()).execute()) {
+                        String resp=response.body()==null?"":response.body().string();
+                        int code=response.code();
+                        if(code>=200&&code<300) {
+                            return responsesApi ? parseResponsesText(resp) : parseChatText(resp);
+                        }
 
-                    int code=h.getResponseCode();
-                    InputStream is=code>=200&&code<300?h.getInputStream():h.getErrorStream();
-                    String resp=read(is);
+                        String error=extractError(resp);
+                        if((code==429 || code>=500) && attempt<MAX_ATTEMPTS) {
+                            sleepBeforeRetry(attempt);
+                            continue;
+                        }
 
-                    if(code>=200&&code<300) {
-                        return responsesApi ? parseResponsesText(resp) : parseChatText(resp);
+                        throw new IOException(formatHttpError(code, endpoint, error));
                     }
-
-                    String error=extractError(resp);
-                    if((code==429 || code>=500) && attempt<MAX_ATTEMPTS) {
-                        sleepBeforeRetry(attempt);
-                        continue;
-                    }
-                    throw new IOException("AI HTTP "+code+": "+error);
                 } catch(UnknownHostException e) {
                     lastIo=e;
                     break;
@@ -96,21 +100,59 @@ public final class OpenAICompatibleTranslator {
                         continue;
                     }
                     throw e;
-                } finally {
-                    if(h!=null) h.disconnect();
                 }
             }
         }
 
         String hostError=lastIo==null?"không xác định":lastIo.getMessage();
         if(isOpenRouter(normalized)) {
-            throw new IOException("Không phân giải được máy chủ OpenRouter. App đã thử openrouter.ai, us.openrouter.ai và eu.openrouter.ai. Hãy kiểm tra Internet/Private DNS trên Android. Chi tiết: "+hostError,lastIo);
+            throw new IOException("Không phân giải được máy chủ OpenRouter từ app. App đã dùng DNS-over-HTTPS và thử openrouter.ai, us.openrouter.ai và eu.openrouter.ai. Kiểm tra Internet/VPN/Private DNS nếu lỗi vẫn còn. Chi tiết: "+hostError,lastIo);
+        }
+        if(isGemini(normalized)) {
+            throw new IOException("Không phân giải được máy chủ Gemini từ app. App đã dùng DNS-over-HTTPS để tránh lỗi resolver của Android. Kiểm tra Internet/VPN nếu lỗi vẫn còn. Chi tiết: "+hostError,lastIo);
         }
         throw new IOException("Không thể kết nối tới AI provider. Chi tiết: "+hostError,lastIo);
     }
 
+    private static OkHttpClient createHttpClient() {
+        OkHttpClient bootstrap = new OkHttpClient.Builder()
+                .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .writeTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build();
+
+        DnsOverHttps doh = new DnsOverHttps.Builder()
+                .client(bootstrap)
+                .url(HttpUrl.parse("https://cloudflare-dns.com/dns-query"))
+                .bootstrapDnsHosts(
+                        ip("1.1.1.1"),
+                        ip("1.0.0.1"),
+                        ip("2606:4700:4700::1111"),
+                        ip("2606:4700:4700::1001"))
+                .includeIPv6(true)
+                .build();
+
+        return bootstrap.newBuilder()
+                .dns(doh)
+                .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .writeTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build();
+    }
+
+    private static InetAddress ip(String value) {
+        try { return InetAddress.getByName(value); }
+        catch (UnknownHostException e) { throw new IllegalStateException("Invalid DNS bootstrap address: "+value,e); }
+    }
+
     private static boolean isOpenRouter(String endpoint) {
         return endpoint.contains("openrouter.ai");
+    }
+
+    private static boolean isGemini(String endpoint) {
+        return endpoint.contains("generativelanguage.googleapis.com");
     }
 
     private static List<String> endpointCandidates(String endpoint) {
@@ -136,6 +178,8 @@ public final class OpenAICompatibleTranslator {
                 || s.contains("connection aborted")
                 || s.contains("software caused connection abort")
                 || s.contains("broken pipe")
+                || s.contains("stream reset")
+                || s.contains("refused")
                 || s.contains("timed out")
                 || s.contains("timeout");
     }
@@ -172,7 +216,15 @@ public final class OpenAICompatibleTranslator {
 
     private static String parseChatText(String resp) throws Exception {
         JSONObject r=new JSONObject(resp);
-        return cleanModelOutput(r.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content"));
+        JSONArray choices=r.optJSONArray("choices");
+        if(choices==null||choices.length()==0) throw new IOException("Provider trả về response không có choices.");
+        JSONObject message=choices.optJSONObject(0);
+        if(message==null) throw new IOException("Provider trả về choice không hợp lệ.");
+        JSONObject msg=message.optJSONObject("message");
+        if(msg==null) throw new IOException("Provider trả về message không hợp lệ.");
+        Object content=msg.opt("content");
+        if(content==null||content==JSONObject.NULL) throw new IOException("Provider không trả về nội dung bản dịch.");
+        return cleanModelOutput(String.valueOf(content));
     }
 
     private static String cleanModelOutput(String s) {
@@ -191,10 +243,25 @@ public final class OpenAICompatibleTranslator {
             JSONObject error=r.optJSONObject("error");
             if(error!=null) {
                 String message=error.optString("message","");
-                if(!message.isEmpty()) return message;
+                String status=error.optString("status","");
+                String code=error.has("code")?String.valueOf(error.opt("code")):"";
+                StringBuilder out=new StringBuilder();
+                if(!code.isEmpty()) out.append("code ").append(code).append(": ");
+                if(!message.isEmpty()) out.append(message);
+                if(!status.isEmpty()) out.append(" [").append(status).append("]");
+                if(out.length()>0) return out.toString();
             }
         } catch(Exception ignored) {}
         return resp==null||resp.isEmpty()?"Provider không trả về chi tiết lỗi.":resp;
+    }
+
+    private static String formatHttpError(int code,String endpoint,String error) {
+        String provider=isGemini(endpoint)?"Gemini":isOpenRouter(endpoint)?"OpenRouter":"AI provider";
+        if(code==401||code==403) return provider+" HTTP "+code+": API key không hợp lệ hoặc không có quyền. "+error;
+        if(code==404) return provider+" HTTP 404: endpoint hoặc model không tồn tại. "+error;
+        if(code==429) return provider+" HTTP 429: quota/rate limit. "+error;
+        if(code>=500) return provider+" HTTP "+code+": provider đang lỗi/tạm thời không sẵn sàng. "+error;
+        return provider+" HTTP "+code+": "+error;
     }
 
     private static String read(InputStream in)throws Exception {
