@@ -1,6 +1,6 @@
 package com.aitiniubi.medicalbooktranslator;
 
-import android.app.*;import android.content.*;import android.net.Uri;import android.os.*;import android.text.InputType;import android.view.*;import android.widget.*;
+import android.app.*;import android.content.*;import android.net.Uri;import android.os.*;import android.text.InputType;import android.view.*;import android.widget.*;import android.text.TextUtils;
 import com.aitiniubi.medicalbooktranslator.epub.*;import com.aitiniubi.medicalbooktranslator.translation.*;
 import java.io.*;import java.util.*;
 
@@ -36,12 +36,18 @@ public class MainActivity extends Activity {
         EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);ep.setText(savedEndpoint);
         EditText key=new EditText(this);key.setHint("API key");key.setSingleLine(true);key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);key.setText(prefsHolder.getString("apiKey",""));
         TextView note=new TextView(this);note.setTextSize(12);note.setPadding(0,12,0,0);
+        TextView keyLink=new TextView(this);keyLink.setTextSize(14);keyLink.setPadding(0,10,0,10);keyLink.setVisibility(View.GONE);
+        keyLink.setTextColor(0xff1565c0);keyLink.setPaintFlags(keyLink.getPaintFlags()|8);
         Runnable refresh=()->{String p=(String)provider.getSelectedItem();String[] ms;String[] labels;
             if(p.equals(PROVIDERS[0])){ms=OR_MODELS;labels=OR_LABELS;ep.setText(OPENROUTER_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("OpenRouter: model FREE ($0) nhưng quota/độ sẵn sàng có thể thay đổi.");}
             else if(p.equals(PROVIDERS[1])){ms=GEMINI_MODELS;labels=GEMINI_LABELS;ep.setText(GEMINI_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("Gemini: các model trong danh sách có Free Tier theo tài liệu Google hiện tại.");}
             else if(p.equals(PROVIDERS[2])){ms=OPENAI_MODELS;labels=OPENAI_MODELS;ep.setText(OPENAI_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("OpenAI API cần credit/billing. HTTP 429 có thể xảy ra khi tài khoản hết credit.");}
             else {ms=new String[]{savedModel};labels=ms;ep.setText(savedEndpoint);customModel.setText(savedModel);customModel.setVisibility(View.VISIBLE);note.setText("Nhập endpoint và model của provider OpenAI-compatible bất kỳ.");}
             model.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
+            if(p.equals(PROVIDERS[0])){keyLink.setText("🔑 Lấy OpenRouter API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://openrouter.ai/settings/keys"));}
+            else if(p.equals(PROVIDERS[1])){keyLink.setText("🔑 Lấy Gemini API key (Google AI Studio)");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://aistudio.google.com/apikey"));}
+            else if(p.equals(PROVIDERS[2])){keyLink.setText("🔑 Lấy OpenAI API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://platform.openai.com/api-keys"));}
+            else {keyLink.setText("ℹ️ Provider tùy chỉnh — nhập API key của dịch vụ");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->{});}
             int sel=indexOf(ms,savedModel);if(sel<0)sel=0;model.setSelection(sel);model.setVisibility(p.equals(PROVIDERS[3])?View.GONE:View.VISIBLE);
         };
         provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){refresh.run();}public void onNothingSelected(AdapterView<?> a){}});
@@ -52,11 +58,12 @@ public class MainActivity extends Activity {
             TranslationConfig tc=new TranslationConfig();tc.endpoint=ep.getText().toString().trim();tc.model=selectedModel;tc.apiKey=key.getText().toString();test.setEnabled(false);
             new Thread(()->{try{String out=OpenAICompatibleTranslator.translate("Translate only: fetal ultrasound","Medical translation connection test.",tc);runOnUiThread(()->{test.setEnabled(true);new AlertDialog.Builder(this).setTitle("Kết nối thành công").setMessage("Model: "+tc.model+"\\n\\n"+out).setPositiveButton("OK",null).show();});}catch(Exception ex){runOnUiThread(()->{test.setEnabled(true);showError(ex);});}}).start();
         });
-        box.addView(provider);box.addView(model);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(test);box.addView(note);
+        box.addView(provider);box.addView(model);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);box.addView(test);box.addView(note);
         new AlertDialog.Builder(this).setTitle("Cấu hình AI").setView(box).setPositiveButton("Lưu",(d,w)->{String p=(String)provider.getSelectedItem();String selectedModel;
             if(p.equals(PROVIDERS[3]))selectedModel=customModel.getText().toString().trim();else{String[] ms=p.equals(PROVIDERS[0])?OR_MODELS:p.equals(PROVIDERS[1])?GEMINI_MODELS:OPENAI_MODELS;int pos=model.getSelectedItemPosition();selectedModel=ms[Math.max(0,Math.min(pos,ms.length-1))];}
             prefsHolder.edit().putString("endpoint",ep.getText().toString().trim()).putString("model",selectedModel).putString("apiKey",key.getText().toString()).apply();status.setText("AI: "+p+" / "+selectedModel);}).setNegativeButton("Hủy",null).show();
     }
+    private void openUrl(String url){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){showError(e);}}
     private void translate(){TranslationConfig c=config();if(c.endpoint.isEmpty()||c.model.isEmpty()){settings();return;}File out=new File(getExternalFilesDir(null),"translated_"+System.currentTimeMillis()+".epub");progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);report.setText("Đang dịch…\nBản gốc vẫn được giữ nguyên.");translate.setEnabled(false);TranslationJob.run(selectedFile,out,c,new TranslationJob.Listener(){public void onProgress(int d,int t){int p=(int)(100.0*d/t);runOnUiThread(()->progress.setProgress(p));}public void onDone(File f){lastOutput=f;runOnUiThread(()->{progress.setProgress(100);translate.setEnabled(true);export.setEnabled(true);report.append("\n\n✓ Đã tạo EPUB: "+f.getAbsolutePath());});}public void onError(Exception e){runOnUiThread(()->{translate.setEnabled(true);showError(e);});}});}
     private void saveOutput(){if(lastOutput==null)return;Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("application/epub+zip");i.putExtra(Intent.EXTRA_TITLE,lastOutput.getName());startActivityForResult(i,11);}
     private void showError(Exception e){progress.setVisibility(View.GONE);new AlertDialog.Builder(this).setTitle("Lỗi").setMessage(e.getMessage()==null?e.toString():e.getMessage()).setPositiveButton("OK",null).show();}
