@@ -43,13 +43,13 @@ public class MainActivity extends Activity {
             if(p.equals(PROVIDERS[0])){ms=OR_MODELS;labels=OR_LABELS;ep.setText(OPENROUTER_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("OpenRouter: model FREE ($0) nhưng quota/độ sẵn sàng có thể thay đổi.");}
             else if(p.equals(PROVIDERS[1])){ms=GEMINI_MODELS;labels=GEMINI_LABELS;ep.setText(GEMINI_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("Gemini: các model trong danh sách có Free Tier theo tài liệu Google hiện tại.");}
             else if(p.equals(PROVIDERS[2])){ms=OPENAI_MODELS;labels=OPENAI_MODELS;ep.setText(OPENAI_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("OpenAI API cần credit/billing. HTTP 429 có thể xảy ra khi tài khoản hết credit.");}
-            else {ms=new String[]{savedModel};labels=ms;ep.setText(savedEndpoint);customModel.setText(savedModel);customModel.setVisibility(View.VISIBLE);note.setText("Nhập endpoint và model của provider OpenAI-compatible bất kỳ.");}
+            else {ms=new String[]{effectiveSavedModel};labels=ms;ep.setText(savedEndpoint);customModel.setText(effectiveSavedModel);customModel.setVisibility(View.VISIBLE);note.setText("Nhập endpoint và model của provider OpenAI-compatible bất kỳ.");}
             model.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
             if(p.equals(PROVIDERS[0])){keyLink.setText("🔑 Lấy OpenRouter API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://openrouter.ai/settings/keys"));}
             else if(p.equals(PROVIDERS[1])){keyLink.setText("🔑 Lấy Gemini API key (Google AI Studio)");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://aistudio.google.com/apikey"));}
             else if(p.equals(PROVIDERS[2])){keyLink.setText("🔑 Lấy OpenAI API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://platform.openai.com/api-keys"));}
             else {keyLink.setText("ℹ️ Provider tùy chỉnh — nhập API key của dịch vụ");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->{});}
-            int sel=indexOf(ms,savedModel);if(sel<0)sel=0;model.setSelection(sel);model.setVisibility(p.equals(PROVIDERS[3])?View.GONE:View.VISIBLE);
+            int sel=indexOf(ms,effectiveSavedModel);if(sel<0)sel=0;model.setSelection(sel);model.setVisibility(p.equals(PROVIDERS[3])?View.GONE:View.VISIBLE);
         };
         provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){refresh.run();}public void onNothingSelected(AdapterView<?> a){}});
         refresh.run();
