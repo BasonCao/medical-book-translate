@@ -11,6 +11,8 @@ import com.aitiniubi.medicalbooktranslator.epub.*;
 import com.aitiniubi.medicalbooktranslator.translation.*;
 import java.io.*;
 import java.util.*;
+import okhttp3.*;
+import org.json.*;
 
 public class MainActivity extends Activity {
     private static final String OPENROUTER_ENDPOINT="https://openrouter.ai/api/v1/chat/completions";
@@ -23,8 +25,9 @@ public class MainActivity extends Activity {
     private static final String[] PROVIDERS={"OpenRouter — FREE / PAID","Google Gemini — FREE / PAID","OpenAI — PAID","DeepSeek — PAID","Mistral — PAID","Custom OpenAI-compatible"};
     private static final String[] OR_MODELS={"openrouter/free","inclusionai/ling-3.0-flash-sante:free","nvidia/nemotron-3-ultra:free","qwen/qwen3.8-27b:free","google/gemma-4-31b-it:free","google/gemma-4-26b-a4b-it:free","inclusionai/ling-3.0-flash-fin:free"};
     private static final String[] OR_LABELS={"Auto Free Router","Ling 3.0 Flash Sante — Medical","NVIDIA Nemotron 3 Ultra — Free","Qwen 3.8 27B — Free","Gemma 4 31B — Free","Gemma 4 26B A4B — Free","Ling 3.0 Flash Fin — Free"};
-    private static final String[] GEMINI_MODELS={"gemini-3.8-flash","gemini-3.7-flash","gemini-2.5-flash-lite"};
-    private static final String[] GEMINI_LABELS={"Gemini 3.8 Flash — FREE tier","Gemini 3.7 Flash — FREE tier","Gemini 2.5 Flash-Lite — FREE tier"};
+    private static final String[] GEMINI_MODELS={"gemini-3.8-flash","gemini-3.7-flash","gemini-3.6-flash","gemini-3.5-flash","gemini-3.5-flash-lite","gemini-3.1-flash-lite","gemini-3.1-pro-preview","gemini-3-flash-preview","gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro"};
+    private static final String[] GEMINI_LABELS={"Gemini 3.8 Flash — STABLE","Gemini 3.7 Flash — STABLE","Gemini 3.6 Flash — STABLE","Gemini 3.5 Flash — STABLE","Gemini 3.5 Flash-Lite — STABLE","Gemini 3.1 Flash-Lite — STABLE","Gemini 3.1 Pro — PREVIEW","Gemini 3 Flash — PREVIEW","Gemini 2.5 Flash — LEGACY","Gemini 2.5 Flash-Lite — LEGACY","Gemini 2.5 Pro — LEGACY"};
+    private static final String GEMINI_MODELS_API="https://generativelanguage.googleapis.com/v1beta/models";
     private static final String[] OPENAI_MODELS={"gpt-5.6-luna","gpt-5.6-terra","gpt-5.6-sol"};
     private static final String[] OPENAI_LABELS={"GPT-5.6 Luna — PAID / low cost","GPT-5.6 Terra — PAID","GPT-5.6 Sol — PAID"};
     private static final String[] DEEPSEEK_MODELS={"deepseek-flash","deepseek-v4-pro"};
@@ -216,14 +219,58 @@ public class MainActivity extends Activity {
     }
 
     private int indexOf(String[] a,String v){for(int i=0;i<a.length;i++)if(a[i].equals(v))return i;return -1;}
-    private String[] modelsFor(String p){return p.equals(PROVIDERS[0])?OR_MODELS:p.equals(PROVIDERS[1])?GEMINI_MODELS:p.equals(PROVIDERS[2])?OPENAI_MODELS:p.equals(PROVIDERS[3])?DEEPSEEK_MODELS:p.equals(PROVIDERS[4])?MISTRAL_MODELS:new String[]{providerModel(PROVIDERS[5])};}
-    private String[] labelsFor(String p){return p.equals(PROVIDERS[0])?OR_LABELS:p.equals(PROVIDERS[1])?GEMINI_LABELS:p.equals(PROVIDERS[2])?OPENAI_LABELS:p.equals(PROVIDERS[3])?DEEPSEEK_LABELS:p.equals(PROVIDERS[4])?MISTRAL_LABELS:new String[]{providerModel(PROVIDERS[5])};}
+    private String[] modelsFor(String p){if(p.equals(PROVIDERS[0]))return OR_MODELS;if(p.equals(PROVIDERS[1]))return geminiCatalog()[0];if(p.equals(PROVIDERS[2]))return OPENAI_MODELS;if(p.equals(PROVIDERS[3]))return DEEPSEEK_MODELS;if(p.equals(PROVIDERS[4]))return MISTRAL_MODELS;return new String[]{providerModel(PROVIDERS[5])};}
+    private String[] labelsFor(String p){if(p.equals(PROVIDERS[0]))return OR_LABELS;if(p.equals(PROVIDERS[1]))return geminiCatalog()[1];if(p.equals(PROVIDERS[2]))return OPENAI_LABELS;if(p.equals(PROVIDERS[3]))return DEEPSEEK_LABELS;if(p.equals(PROVIDERS[4]))return MISTRAL_LABELS;return new String[]{providerModel(PROVIDERS[5])};}
+
+    private String[][] geminiCatalog(){
+        String idsRaw=prefsHolder.getString("gemini_catalog_ids","");
+        String labelsRaw=prefsHolder.getString("gemini_catalog_labels","");
+        if(!idsRaw.trim().isEmpty()&&!labelsRaw.trim().isEmpty()){
+            String[] ids=idsRaw.split("\\n",-1),labels=labelsRaw.split("\\n",-1);
+            if(ids.length==labels.length&&ids.length>0)return new String[][]{ids,labels};
+        }
+        return new String[][]{GEMINI_MODELS,GEMINI_LABELS};
+    }
+
+    private void refreshGeminiCatalog(Spinner model,TextView note,Runnable refresh){
+        String apiKey=prefsHolder.getString(PREF_GEMINI_KEY,"").trim();
+        if(apiKey.isEmpty()){new AlertDialog.Builder(this).setTitle("Chưa có Gemini API key").setMessage("Nhập Gemini API key trước, rồi bấm làm mới danh sách model.").setPositiveButton("OK",null).show();return;}
+        Toast.makeText(this,"Đang lấy danh sách Gemini model từ Google…",Toast.LENGTH_SHORT).show();
+        new Thread(()->{try{
+            HttpUrl url=HttpUrl.parse(GEMINI_MODELS_API).newBuilder().addQueryParameter("key",apiKey).build();
+            Request req=new Request.Builder().url(url).get().build();
+            try(Response res=new OkHttpClient().newCall(req).execute()){
+                String body=res.body()==null?"":res.body().string();
+                if(!res.isSuccessful())throw new IOException("Gemini models API HTTP "+res.code()+"\\n"+body);
+                JSONArray arr=new JSONObject(body).optJSONArray("models");
+                if(arr==null)throw new IOException("Gemini models API không trả về danh sách models.");
+                LinkedHashMap<String,String> found=new LinkedHashMap<>();
+                for(int i=0;i<arr.length();i++){
+                    JSONObject m=arr.optJSONObject(i);if(m==null)continue;
+                    String name=m.optString("name",""),id=name.startsWith("models/")?name.substring(7):name;
+                    JSONArray methods=m.optJSONArray("supportedGenerationMethods");boolean generate=false;
+                    if(methods!=null)for(int j=0;j<methods.length();j++)if("generateContent".equalsIgnoreCase(methods.optString(j)))generate=true;
+                    String low=id.toLowerCase(Locale.US);
+                    if(!generate||!low.startsWith("gemini-"))continue;
+                    if(low.contains("-tts")||low.contains("-live")||low.contains("image")||low.contains("transcribe")||low.contains("embedding")||low.contains("robotics")||low.contains("computer-use")||low.contains("deep-research")||low.contains("omni"))continue;
+                    String display=m.optString("displayName",id),desc=m.optString("description",""),suffix=desc.toLowerCase(Locale.US).contains("preview")||low.contains("preview")?" — PREVIEW":"";
+                    found.put(id,display+suffix);
+                }
+                if(found.isEmpty())throw new IOException("Không tìm thấy Gemini model text hỗ trợ generateContent.");
+                StringBuilder ids=new StringBuilder(),labels=new StringBuilder();int n=0;
+                for(Map.Entry<String,String> e:found.entrySet()){if(n++>0){ids.append("\\n");labels.append("\\n");}ids.append(e.getKey());labels.append(e.getValue());}
+                prefsHolder.edit().putString("gemini_catalog_ids",ids.toString()).putString("gemini_catalog_labels",labels.toString()).apply();
+                runOnUiThread(()->{refresh.run();note.setText("Gemini catalog đã cập nhật từ Google: "+found.size()+" model text hỗ trợ generateContent.");Toast.makeText(this,"Đã cập nhật "+found.size()+" Gemini model.",Toast.LENGTH_LONG).show();});
+            }
+        }catch(Exception e){runOnUiThread(()->showError(e));}}).start();
+    }
 
     private void settings(){
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(40,10,40,10);
         Spinner provider=new Spinner(this);provider.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,PROVIDERS));
         provider.setSelection(Math.max(0,indexOf(PROVIDERS,providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT)))));
         Spinner model=new Spinner(this);
+        Button refreshGemini=new Button(this);refreshGemini.setText("🔄 Làm mới danh sách Gemini model");
         EditText customModel=new EditText(this);customModel.setHint("Model ID tùy chỉnh");customModel.setSingleLine(true);
         EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);
         EditText key=new EditText(this);key.setHint("API key");key.setSingleLine(true);key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -255,7 +302,9 @@ public class MainActivity extends Activity {
             fallbackNote.setText(fb.toString());
         };
 
-        provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){refresh.run();}public void onNothingSelected(AdapterView<?> a){}});
+        refreshGemini.setVisibility(provider.getSelectedItemPosition()==1?View.VISIBLE:View.GONE);
+        refreshGemini.setOnClickListener(v->refreshGeminiCatalog(model,note,refresh));
+        provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){refresh.run();refreshGemini.setVisibility(pos==1?View.VISIBLE:View.GONE);}public void onNothingSelected(AdapterView<?> a){}});
         model.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){}public void onNothingSelected(AdapterView<?> a){}});
 
         Button test=new Button(this);test.setText("KIỂM TRA PROVIDER NÀY");
@@ -270,7 +319,7 @@ public class MainActivity extends Activity {
             }catch(Exception ex){runOnUiThread(()->{test.setEnabled(true);showError(ex);});}}).start();
         });
 
-        box.addView(provider);box.addView(model);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);box.addView(test);box.addView(note);box.addView(fallbackNote);
+        box.addView(provider);box.addView(model);box.addView(refreshGemini);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);box.addView(test);box.addView(note);box.addView(fallbackNote);
         new AlertDialog.Builder(this).setTitle("Cấu hình AI + Failover").setView(box).setPositiveButton("Lưu",(d,w)->{
             String p=(String)provider.getSelectedItem(),selectedModel;
             if(p.equals(PROVIDERS[5]))selectedModel=customModel.getText().toString().trim();
