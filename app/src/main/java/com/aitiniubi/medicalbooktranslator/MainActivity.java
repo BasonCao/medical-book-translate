@@ -46,7 +46,11 @@ public class MainActivity extends Activity {
     }
 
     private String providerKey(String provider){
-        if(provider.equals(PROVIDERS[0])) return prefsHolder.getString(PREF_OR_KEY,"");
+        if(provider.equals(PROVIDERS[0])){
+            String k=prefsHolder.getString(PREF_OR_KEY,"");
+            if(k.isEmpty() && providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT)).equals(PROVIDERS[0])) k=prefsHolder.getString("apiKey","");
+            return k;
+        }
         if(provider.equals(PROVIDERS[1])) return prefsHolder.getString(PREF_GEMINI_KEY,"");
         if(provider.equals(PROVIDERS[2])) return prefsHolder.getString(PREF_OPENAI_KEY,"");
         return prefsHolder.getString(PREF_CUSTOM_KEY,"");
