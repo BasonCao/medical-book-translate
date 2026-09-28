@@ -31,7 +31,7 @@ public class MainActivity extends Activity {
     private void settings(){
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(40,10,40,10);
         Spinner provider=new Spinner(this);provider.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,PROVIDERS));
-        String savedEndpoint=prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT),savedModel=prefsHolder.getString("model",DEFAULT_OR_MODEL);if("openrouter/free".equals(savedModel))savedModel=DEFAULT_OR_MODEL;
+        String savedEndpoint=prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT);String rawSavedModel=prefsHolder.getString("model",DEFAULT_OR_MODEL);final String savedModel="openrouter/free".equals(rawSavedModel)?DEFAULT_OR_MODEL:rawSavedModel;
         provider.setSelection(Math.max(0,indexOf(PROVIDERS,providerFor(savedEndpoint))));
         Spinner model=new Spinner(this);EditText customModel=new EditText(this);customModel.setHint("Model ID tùy chỉnh");customModel.setSingleLine(true);
         EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);ep.setText(savedEndpoint);
