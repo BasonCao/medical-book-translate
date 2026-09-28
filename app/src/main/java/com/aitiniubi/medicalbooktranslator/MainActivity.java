@@ -298,6 +298,10 @@ public class MainActivity extends Activity {
         EditText key=new EditText(this);key.setHint("API key");key.setSingleLine(true);key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         TextView note=new TextView(this);note.setTextSize(12);note.setPadding(0,12,0,0);
         TextView fallbackNote=new TextView(this);fallbackNote.setTextSize(12);fallbackNote.setPadding(0,8,0,0);
+        CheckBox freePool=new CheckBox(this);freePool.setText("FREE AI POOL — OpenRouter Free + Gemini Free");
+        freePool.setChecked(prefsHolder.getBoolean(PREF_FREE_POOL,true));
+        CheckBox allowPaid=new CheckBox(this);allowPaid.setText("Cho phép provider trả phí khi free pool hết quota");
+        allowPaid.setChecked(prefsHolder.getBoolean(PREF_ALLOW_PAID,false));
         TextView keyLink=new TextView(this);keyLink.setTextSize(14);keyLink.setPadding(0,10,0,10);keyLink.setVisibility(View.GONE);
         keyLink.setTextColor(0xff1565c0);keyLink.setPaintFlags(keyLink.getPaintFlags()|8);
 
@@ -319,7 +323,7 @@ public class MainActivity extends Activity {
             else if(p.equals(PROVIDERS[3])){keyLink.setText("🔑 DeepSeek API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://platform.deepseek.com/api_keys"));}
             else if(p.equals(PROVIDERS[4])){keyLink.setText("🔑 Mistral API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://console.mistral.ai/api-keys/"));}
             else{keyLink.setText("ℹ️ Custom provider");keyLink.setVisibility(View.VISIBLE);}
-            StringBuilder fb=new StringBuilder("Failover: ");List<TranslationRouter.Provider> ps=fallbackProviders();
+            StringBuilder fb=new StringBuilder(freePool.isChecked()?"FREE POOL: ":"ALL PROVIDERS: ");List<TranslationRouter.Provider> ps=fallbackProviders();
             if(ps.isEmpty())fb.append("chưa cấu hình");else for(int i=0;i<ps.size();i++){if(i>0)fb.append(" → ");fb.append(ps.get(i).name);}
             fallbackNote.setText(fb.toString());
         };
@@ -341,13 +345,14 @@ public class MainActivity extends Activity {
             }catch(Exception ex){runOnUiThread(()->{test.setEnabled(true);showError(ex);});}}).start();
         });
 
-        box.addView(provider);box.addView(model);box.addView(refreshGemini);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);box.addView(test);box.addView(note);box.addView(fallbackNote);
+        box.addView(freePool);box.addView(allowPaid);box.addView(provider);box.addView(model);box.addView(refreshGemini);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);box.addView(test);box.addView(note);box.addView(fallbackNote);
         new AlertDialog.Builder(this).setTitle("Cấu hình AI + Failover").setView(box).setPositiveButton("Lưu",(d,w)->{
             String p=(String)provider.getSelectedItem(),selectedModel;
             if(p.equals(PROVIDERS[5]))selectedModel=customModel.getText().toString().trim();
             else{String[] ms=modelsFor(p);int pos=model.getSelectedItemPosition();selectedModel=ms[Math.max(0,Math.min(pos,ms.length-1))];}
             String enteredKey=key.getText().toString();
             android.content.SharedPreferences.Editor e=prefsHolder.edit();
+            e.putBoolean(PREF_FREE_POOL,freePool.isChecked()).putBoolean(PREF_ALLOW_PAID,allowPaid.isChecked());
             e.putString("apiKey",enteredKey).putString("endpoint",ep.getText().toString().trim()).putString("model",selectedModel);
             if(p.equals(PROVIDERS[0]))e.putString(PREF_OR_KEY,enteredKey).putString("model_openrouter",selectedModel);
             else if(p.equals(PROVIDERS[1]))e.putString(PREF_GEMINI_KEY,enteredKey).putString("model_gemini",selectedModel);
@@ -355,7 +360,7 @@ public class MainActivity extends Activity {
             else if(p.equals(PROVIDERS[3]))e.putString(PREF_DEEPSEEK_KEY,enteredKey).putString("model_deepseek",selectedModel);
             else if(p.equals(PROVIDERS[4]))e.putString(PREF_MISTRAL_KEY,enteredKey).putString("model_mistral",selectedModel);
             else e.putString(PREF_CUSTOM_KEY,enteredKey).putString("endpoint_custom",ep.getText().toString().trim()).putString("model_custom",selectedModel);
-            e.apply();status.setText("AI: "+p+" / "+selectedModel+" | Failover: "+fallbackProviders().size()+" provider");
+            e.apply();status.setText((freePool.isChecked()?"FREE POOL":"ALL PROVIDERS")+" | AI: "+p+" / "+selectedModel+" | Failover: "+fallbackProviders().size()+" provider");
         }).setNegativeButton("Hủy",null).show();
     }
 
