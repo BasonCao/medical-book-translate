@@ -169,7 +169,7 @@ public final class TranslationJob {
                     Matcher m=BLOCK.matcher(x);int i=0;boolean replaced=false;
                     while(m.find()){
                         if(i==r.u.ordinal){
-                            String rep="<"+m.group(1)+m.group(2)+">"+r.t+"</"+m.group(4)+">";
+                            String rep="<"+m.group(1)+m.group(2)+">"+r.t+"</"+m.group(1)+">";
                             x=x.substring(0,m.start())+rep+x.substring(m.end());replaced=true;break;
                         }
                         i++;
