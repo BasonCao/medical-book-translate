@@ -6,6 +6,7 @@ import java.io.*;import java.util.*;
 
 public class MainActivity extends Activity {
     private static final String OPENROUTER_ENDPOINT="https://openrouter.ai/api/v1/chat/completions";
+    private static final String DEFAULT_OR_MODEL="inclusionai/ling-3.0-flash-sante:free";
     private static final String GEMINI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
     private static final String OPENAI_ENDPOINT="https://api.openai.com/v1/responses";
     private static final String[] PROVIDERS={"OpenRouter — FREE","Google Gemini — FREE tier","OpenAI","Custom OpenAI-compatible"};
@@ -24,13 +25,13 @@ public class MainActivity extends Activity {
     private void pick(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("application/epub+zip");i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,10);}
     @Override protected void onActivityResult(int r,int c, Intent d){super.onActivityResult(r,c,d);if(r==11&&c==RESULT_OK&&d!=null){try{try(InputStream in=new FileInputStream(lastOutput);OutputStream out=getContentResolver().openOutputStream(d.getData())){byte[]b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);}Toast.makeText(this,"Đã xuất EPUB",Toast.LENGTH_LONG).show();}catch(Exception e){showError(e);}return;}if(r==10&&c==RESULT_OK&&d!=null){try{Uri u=d.getData();selectedFile=new File(getCacheDir(),"input.epub");try(InputStream in=getContentResolver().openInputStream(u);FileOutputStream out=new FileOutputStream(selectedFile)){byte[]b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);}status.setText("Đã chọn: "+u.getLastPathSegment());analyze.setEnabled(true);translate.setEnabled(true);}catch(Exception e){showError(e);}}}
     private void analyze(){if(selectedFile==null)return;progress.setVisibility(View.VISIBLE);progress.setIndeterminate(true);report.setText("Đang phân tích cấu trúc EPUB…");new Thread(()->{try{book=EpubAnalyzer.analyze(selectedFile);runOnUiThread(()->{progress.setVisibility(View.GONE);progress.setIndeterminate(false);report.setText("EPUB: "+book.title+"\nFiles: "+book.totalFiles+"\nXHTML: "+book.xhtmlFiles.size()+"\nĐoạn văn: "+book.paragraphCount+"\nHình/ảnh tham chiếu: "+book.imageReferenceCount+"\nFigure: "+book.figureCount+"\nBảng: "+book.tableCount+"\n\nCấu trúc gốc sẽ được giữ nguyên khi rebuild.");});}catch(Exception e){runOnUiThread(()->showError(e));}}).start();}
-    private TranslationConfig config(){TranslationConfig c=new TranslationConfig();c.endpoint=prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT);c.apiKey=prefsHolder.getString("apiKey","");c.model=prefsHolder.getString("model","openrouter/free");return c;}
+    private TranslationConfig config(){TranslationConfig c=new TranslationConfig();c.endpoint=prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT);c.apiKey=prefsHolder.getString("apiKey","");String savedModel=prefsHolder.getString("model",DEFAULT_OR_MODEL);c.model="openrouter/free".equals(savedModel)?DEFAULT_OR_MODEL:savedModel;return c;}
     private int indexOf(String[] a,String value){for(int i=0;i<a.length;i++)if(a[i].equals(value))return i;return -1;}
     private String providerFor(String endpoint){if(endpoint!=null&&endpoint.contains("openrouter.ai"))return PROVIDERS[0];if(endpoint!=null&&endpoint.contains("generativelanguage.googleapis.com"))return PROVIDERS[1];if(endpoint!=null&&endpoint.contains("api.openai.com"))return PROVIDERS[2];return PROVIDERS[3];}
     private void settings(){
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(40,10,40,10);
         Spinner provider=new Spinner(this);provider.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,PROVIDERS));
-        String savedEndpoint=prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT),savedModel=prefsHolder.getString("model","openrouter/free");
+        String savedEndpoint=prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT),savedModel=prefsHolder.getString("model",DEFAULT_OR_MODEL);if("openrouter/free".equals(savedModel))savedModel=DEFAULT_OR_MODEL;
         provider.setSelection(Math.max(0,indexOf(PROVIDERS,providerFor(savedEndpoint))));
         Spinner model=new Spinner(this);EditText customModel=new EditText(this);customModel.setHint("Model ID tùy chỉnh");customModel.setSingleLine(true);
         EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);ep.setText(savedEndpoint);
