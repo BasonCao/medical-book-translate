@@ -33,8 +33,10 @@ public final class TranslationJob {
 
                 List<Unit> units=extractUnits(source);
                 String sourceHash=TranslationStateStore.sha256(source);
+                int total=0;
+                for(Unit u:units) if(u.translatable) total++;
                 TranslationStateStore store=new TranslationStateStore(workspace);
-                store.initialize(sourceHash,source.getName(),units.size());
+                store.initialize(sourceHash,source.getName(),total);
 
                 Map<String,String> doneMap=new LinkedHashMap<>();
                 int done=0;
@@ -42,7 +44,7 @@ public final class TranslationJob {
                     TranslationStateStore.Record r=store.get(u.id,u.sourceHash);
                     if(r!=null&&!blank(r.translation)){doneMap.put(u.id,r.translation);done++;}
                 }
-                listener.onProgress(done,units.size(),0,"Khôi phục draft: "+done+"/"+units.size());
+                listener.onProgress(done,total,0,"Khôi phục draft: "+done+"/"+total);
 
                 List<Unit> pending=new ArrayList<>();
                 for(Unit u:units)if(!doneMap.containsKey(u.id)&&u.translatable)pending.add(u);
@@ -65,9 +67,9 @@ public final class TranslationJob {
                             if(blank(t))throw new IOException("AI trả về bản dịch rỗng cho unit "+u.id);
                             store.put(new TranslationStateStore.Record(u.id,u.file,u.sourceHash,t));
                             doneMap.put(u.id,t);done++;
-                            listener.onProgress(done,units.size(),batchNo,"Đã lưu batch "+batchNo);
+                            listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
                         }
-                        store.saveManifest(sourceHash,source.getName(),units.size(),done);
+                        store.saveManifest(sourceHash,source.getName(),total,done);
                         File draft=new File(workspace,"translated-current.epub");
                         rebuild(source,draft,units,doneMap);
                         start+=batch.size();
@@ -75,7 +77,7 @@ public final class TranslationJob {
                         store.saveManifest(sourceHash,source.getName(),units.size(),done);
                         File draft=new File(workspace,"translated-current.epub");
                         rebuild(source,draft,units,doneMap);
-                        listener.onPaused(draft,done,units.size(),e);return;
+                        listener.onPaused(draft,done,total,e);return;
                     }
                 }
 
