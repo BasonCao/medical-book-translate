@@ -77,7 +77,8 @@ public final class OpenAICompatibleTranslator {
 
                         String error=extractError(resp);
                         if((code==429 || code>=500) && attempt<MAX_ATTEMPTS) {
-                            sleepBeforeRetry(attempt);
+                            long retryMs = code==429 ? retryDelayMillis(response, resp) : 700L*attempt;
+                            sleepBeforeRetryMillis(retryMs);
                             continue;
                         }
 
@@ -185,7 +186,11 @@ public final class OpenAICompatibleTranslator {
     }
 
     private static void sleepBeforeRetry(int attempt) throws IOException {
-        try { Thread.sleep(700L*attempt); }
+        sleepBeforeRetryMillis(700L*attempt);
+    }
+
+    private static void sleepBeforeRetryMillis(long millis) throws IOException {
+        try { Thread.sleep(Math.max(0L, millis)); }
         catch(InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("Kết nối AI bị gián đoạn.",e); }
     }
 
@@ -217,14 +222,80 @@ public final class OpenAICompatibleTranslator {
     private static String parseChatText(String resp) throws Exception {
         JSONObject r=new JSONObject(resp);
         JSONArray choices=r.optJSONArray("choices");
-        if(choices==null||choices.length()==0) throw new IOException("Provider trả về response không có choices.");
-        JSONObject message=choices.optJSONObject(0);
-        if(message==null) throw new IOException("Provider trả về choice không hợp lệ.");
-        JSONObject msg=message.optJSONObject("message");
+        if(choices==null||choices.length()==0) throw new IOException("Provider trả về response không có choices. Response: "+compact(resp));
+        JSONObject choice=choices.optJSONObject(0);
+        if(choice==null) throw new IOException("Provider trả về choice không hợp lệ.");
+        JSONObject msg=choice.optJSONObject("message");
         if(msg==null) throw new IOException("Provider trả về message không hợp lệ.");
         Object content=msg.opt("content");
-        if(content==null||content==JSONObject.NULL) throw new IOException("Provider không trả về nội dung bản dịch.");
-        return cleanModelOutput(String.valueOf(content));
+        String text=extractContentText(content);
+        if(!text.isEmpty()) return cleanModelOutput(text);
+
+        // Some OpenAI-compatible providers return structured content blocks.
+        Object reasoning=msg.opt("reasoning");
+        String reasoningText=extractContentText(reasoning);
+        if(!reasoningText.isEmpty()) {
+            throw new IOException("Provider chỉ trả về reasoning mà không có nội dung dịch. finish_reason="
+                    +choice.optString("finish_reason","unknown")+". Hãy đổi model OpenRouter.");
+        }
+
+        throw new IOException("Provider không trả về nội dung bản dịch. finish_reason="
+                +choice.optString("finish_reason","unknown")
+                +", model="+r.optString("model","unknown")
+                +". Response: "+compact(resp));
+    }
+
+    private static String extractContentText(Object value) {
+        if(value==null||value==JSONObject.NULL) return "";
+        if(value instanceof String) return ((String)value).trim();
+        if(value instanceof JSONObject) {
+            JSONObject o=(JSONObject)value;
+            String t=o.optString("text","");
+            if(!t.isEmpty()) return t.trim();
+            return o.optString("content","").trim();
+        }
+        if(value instanceof JSONArray) {
+            JSONArray a=(JSONArray)value;
+            StringBuilder out=new StringBuilder();
+            for(int i=0;i<a.length();i++) {
+                Object item=a.opt(i);
+                String t=extractContentText(item);
+                if(!t.isEmpty()) {
+                    if(out.length()>0) out.append("\n");
+                    out.append(t);
+                }
+            }
+            return out.toString().trim();
+        }
+        return String.valueOf(value).trim();
+    }
+
+    private static long retryDelayMillis(Response response,String body) {
+        String header=response.header("Retry-After");
+        if(header!=null) {
+            try { return Math.min(60000L, Math.max(1000L, Long.parseLong(header.trim())*1000L)); }
+            catch(Exception ignored) {}
+        }
+        try {
+            JSONObject r=new JSONObject(body);
+            JSONArray details=r.optJSONObject("error")==null?null:r.optJSONObject("error").optJSONArray("details");
+            if(details!=null) for(int i=0;i<details.length();i++) {
+                JSONObject d=details.optJSONObject(i);
+                if(d==null) continue;
+                String delay=d.optString("retryDelay","");
+                if(delay.endsWith("s")) {
+                    double seconds=Double.parseDouble(delay.substring(0,delay.length()-1));
+                    return Math.min(60000L,Math.max(1000L,(long)(seconds*1000L)));
+                }
+            }
+        } catch(Exception ignored) {}
+        return 5000L;
+    }
+
+    private static String compact(String s) {
+        if(s==null) return "";
+        String t=s.replaceAll("\\s+"," ").trim();
+        return t.length()>1200?t.substring(0,1200)+"…":t;
     }
 
     private static String cleanModelOutput(String s) {
