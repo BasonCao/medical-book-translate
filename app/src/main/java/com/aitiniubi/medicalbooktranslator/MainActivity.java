@@ -93,6 +93,7 @@ public class MainActivity extends Activity {
     }
 
     private int indexOf(String[] a,String value){for(int i=0;i<a.length;i++)if(a[i].equals(value))return i;return -1;}
+    private String providerFor(String endpoint){if(endpoint!=null&&endpoint.contains("openrouter.ai"))return PROVIDERS[0];if(endpoint!=null&&endpoint.contains("generativelanguage.googleapis.com"))return PROVIDERS[1];if(endpoint!=null&&endpoint.contains("api.openai.com"))return PROVIDERS[2];return PROVIDERS[3];}
 
     private String[] modelsFor(String p){return p.equals(PROVIDERS[0])?OR_MODELS:p.equals(PROVIDERS[1])?GEMINI_MODELS:p.equals(PROVIDERS[2])?OPENAI_MODELS:new String[]{providerModel(PROVIDERS[3])};}
 
