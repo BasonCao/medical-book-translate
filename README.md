@@ -50,3 +50,11 @@ Khuyến nghị production: dùng backend proxy riêng để API key không nằ
 - Translation queue hiện lưu local trên Android, không cần backend và không hard-code API key.
 - Các unit đã dịch được khóa theo `sourceHash`; đổi source sẽ tạo unit mới, tránh áp nhầm bản dịch vào nội dung khác.
 - V1.5 ưu tiên độ bền/resume và tiết kiệm request. Production version tiếp theo nên bổ sung HTML validator/repair, terminology memory UI và medical QA tự động.
+
+
+## V1.7 — Free AI Pool
+
+- Default mode is **FREE AI POOL**: OpenRouter Free → Gemini Free.
+- The app automatically skips a provider after quota/rate-limit errors and continues with the next eligible provider.
+- Paid providers are not used automatically in Free Pool mode. OpenAI/DeepSeek/Mistral/custom can be enabled explicitly as paid fallback.
+- OpenRouter currently advertises free-model API access with a 50 requests/day limit; Gemini API documents a Free tier for selected models, with limits varying by project/model. These limits can change, so the app treats provider errors as the source of truth for routing.
