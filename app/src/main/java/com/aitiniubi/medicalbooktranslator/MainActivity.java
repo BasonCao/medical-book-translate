@@ -41,6 +41,8 @@ public class MainActivity extends Activity {
     private static final String PREF_DEEPSEEK_KEY="apiKey_deepseek";
     private static final String PREF_MISTRAL_KEY="apiKey_mistral";
     private static final String PREF_CUSTOM_KEY="apiKey_custom";
+    private static final String PREF_FREE_POOL="free_ai_pool";
+    private static final String PREF_ALLOW_PAID="allow_paid_fallback";
 
     private TextView status,report;
     private ProgressBar progress;
@@ -205,15 +207,35 @@ public class MainActivity extends Activity {
         c.model=providerModel(p);c.apiKey=providerKey(p);return c;
     }
 
+    private boolean isFreePoolProvider(String p){
+        if(p.equals(PROVIDERS[0])) return true;
+        if(p.equals(PROVIDERS[1])) return isFreeGeminiModel(providerModel(p));
+        return false;
+    }
+
+    private boolean isFreeGeminiModel(String model){
+        if(model==null) return false;
+        String m=model.toLowerCase(Locale.US);
+        return m.startsWith("gemini-") && m.contains("flash")
+                && !m.contains("pro") && !m.contains("image")
+                && !m.contains("live") && !m.contains("tts")
+                && !m.contains("embedding");
+    }
+
     private List<TranslationRouter.Provider> fallbackProviders(){
+        boolean freeOnly=prefsHolder.getBoolean(PREF_FREE_POOL,true);
+        boolean allowPaid=prefsHolder.getBoolean(PREF_ALLOW_PAID,false);
         String selected=providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT));
-        String[] order={selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3],PROVIDERS[4],PROVIDERS[5]};
+        String[] order=freeOnly
+                ? new String[]{selected,PROVIDERS[0],PROVIDERS[1],allowPaid?PROVIDERS[2]:"",allowPaid?PROVIDERS[3]:"",allowPaid?PROVIDERS[4]:"",allowPaid?PROVIDERS[5]:""}
+                : new String[]{selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3],PROVIDERS[4],PROVIDERS[5]};
         List<TranslationRouter.Provider> out=new ArrayList<>();HashSet<String> seen=new HashSet<>();
         for(String p:order){
-            if(!seen.add(p))continue;
-            TranslationConfig c=makeProviderConfig(p);
-            if(c.endpoint!=null&&!c.endpoint.trim().isEmpty()&&c.model!=null&&!c.model.trim().isEmpty()&&c.apiKey!=null&&!c.apiKey.trim().isEmpty())
-                out.add(new TranslationRouter.Provider(p,c));
+            if(p==null||p.isEmpty()||!seen.add(p))continue;
+            if(freeOnly&&!isFreePoolProvider(p)&&!allowPaid)continue;
+            TranslationConfig cfg=makeProviderConfig(p);
+            if(cfg.endpoint!=null&&!cfg.endpoint.trim().isEmpty()&&cfg.model!=null&&!cfg.model.trim().isEmpty()&&cfg.apiKey!=null&&!cfg.apiKey.trim().isEmpty())
+                out.add(new TranslationRouter.Provider(p,cfg));
         }
         return out;
     }
