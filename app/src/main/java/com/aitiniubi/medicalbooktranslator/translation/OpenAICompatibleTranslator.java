@@ -45,8 +45,7 @@ public final class OpenAICompatibleTranslator {
             msgs.put(new JSONObject().put("role","user").put("content",userText));
             body.put("messages",msgs);
             body.put("temperature",0.1);
-            // Keep enough output budget for a full translated paragraph while avoiding excessive reasoning-only output.
-            body.put("max_tokens",4096);
+            // Give translation enough completion room, while preventing reasoning models from\n            // consuming the entire budget on hidden chain-of-thought. OpenRouter supports\n            // the reasoning control on its chat-completions interface.\n            body.put("max_tokens",8192);\n            if(c.endpoint!=null && c.endpoint.contains("openrouter.ai")) {\n                body.put("reasoning",new JSONObject().put("enabled",false));\n            }
         }
 
         byte[] payload=body.toString().getBytes(StandardCharsets.UTF_8);
