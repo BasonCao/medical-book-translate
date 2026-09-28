@@ -9,15 +9,24 @@ public class MainActivity extends Activity {
     private static final String DEFAULT_OR_MODEL="inclusionai/ling-3.0-flash-sante:free";
     private static final String GEMINI_ENDPOINT="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
     private static final String OPENAI_ENDPOINT="https://api.openai.com/v1/responses";
-    private static final String[] PROVIDERS={"OpenRouter — FREE","Google Gemini — FREE tier","OpenAI","Custom OpenAI-compatible"};
+    private static final String DEEPSEEK_ENDPOINT="https://api.deepseek.com/v1/chat/completions";
+    private static final String MISTRAL_ENDPOINT="https://api.mistral.ai/v1/chat/completions";
+    private static final String[] PROVIDERS={"OpenRouter — FREE / PAID","Google Gemini — FREE / PAID","OpenAI — PAID","DeepSeek — PAID","Mistral — PAID","Custom OpenAI-compatible"};
     private static final String[] OR_MODELS={"openrouter/free","inclusionai/ling-3.0-flash-sante:free","nvidia/nemotron-3-ultra:free","qwen/qwen3.8-27b:free","google/gemma-4-31b-it:free","google/gemma-4-26b-a4b-it:free","inclusionai/ling-3.0-flash-fin:free"};
     private static final String[] OR_LABELS={"Auto Free Router","Ling 3.0 Flash Sante — Medical","NVIDIA Nemotron 3 Ultra — Free","Qwen 3.8 27B — Free","Gemma 4 31B — Free","Gemma 4 26B A4B — Free","Ling 3.0 Flash Fin — Free"};
     private static final String[] GEMINI_MODELS={"gemini-3.8-flash","gemini-3.7-flash","gemini-3.6-flash","gemini-3.1-flash-lite"};
     private static final String[] GEMINI_LABELS={"Gemini 3.8 Flash — Free tier","Gemini 3.7 Flash — Free tier","Gemini 3.6 Flash — Free tier","Gemini 3.1 Flash-Lite — Free tier"};
-    private static final String[] OPENAI_MODELS={"gpt-5.6-luna","gpt-5.6-terra","gpt-5.6-sol","gpt-5.6"};
+    private static final String[] OPENAI_MODELS={"gpt-6-luna","gpt-6-sol","gpt-6-astra"};
+    private static final String[] OPENAI_LABELS={"GPT-6 Luna — PAID","GPT-6 Sol — PAID","GPT-6 Astra — PAID"};
+    private static final String[] DEEPSEEK_MODELS={"deepseek-flash","deepseek-v4-pro"};
+    private static final String[] DEEPSEEK_LABELS={"DeepSeek V4.1 Flash — PAID","DeepSeek V4 Pro — PAID"};
+    private static final String[] MISTRAL_MODELS={"mistral-small-2603","mistral-large-latest"};
+    private static final String[] MISTRAL_LABELS={"Mistral Small 4 — PAID","Mistral Large — PAID"};
     private static final String PREF_OR_KEY="apiKey_openrouter";
     private static final String PREF_GEMINI_KEY="apiKey_gemini";
     private static final String PREF_OPENAI_KEY="apiKey_openai";
+    private static final String PREF_DEEPSEEK_KEY="apiKey_deepseek";
+    private static final String PREF_MISTRAL_KEY="apiKey_mistral";
     private static final String PREF_CUSTOM_KEY="apiKey_custom";
 
     private TextView status,report; private ProgressBar progress; private Button analyze,translate,export; private File selectedFile,lastOutput; private EpubBook book;
@@ -42,6 +51,8 @@ public class MainActivity extends Activity {
         if(endpoint!=null&&endpoint.contains("openrouter.ai")) return prefsHolder.getString(PREF_OR_KEY,"");
         if(endpoint!=null&&endpoint.contains("generativelanguage.googleapis.com")) return prefsHolder.getString(PREF_GEMINI_KEY,"");
         if(endpoint!=null&&endpoint.contains("api.openai.com")) return prefsHolder.getString(PREF_OPENAI_KEY,"");
+        if(endpoint!=null&&endpoint.contains("api.deepseek.com")) return prefsHolder.getString(PREF_DEEPSEEK_KEY,"");
+        if(endpoint!=null&&endpoint.contains("api.mistral.ai")) return prefsHolder.getString(PREF_MISTRAL_KEY,"");
         return prefsHolder.getString(PREF_CUSTOM_KEY,"");
     }
 
@@ -53,6 +64,8 @@ public class MainActivity extends Activity {
         }
         if(provider.equals(PROVIDERS[1])) return prefsHolder.getString(PREF_GEMINI_KEY,"");
         if(provider.equals(PROVIDERS[2])) return prefsHolder.getString(PREF_OPENAI_KEY,"");
+        if(provider.equals(PROVIDERS[3])) return prefsHolder.getString(PREF_DEEPSEEK_KEY,"");
+        if(provider.equals(PROVIDERS[4])) return prefsHolder.getString(PREF_MISTRAL_KEY,"");
         return prefsHolder.getString(PREF_CUSTOM_KEY,"");
     }
 
@@ -63,6 +76,8 @@ public class MainActivity extends Activity {
         }
         if(provider.equals(PROVIDERS[1])) return prefsHolder.getString("model_gemini",GEMINI_MODELS[0]);
         if(provider.equals(PROVIDERS[2])) return prefsHolder.getString("model_openai",OPENAI_MODELS[0]);
+        if(provider.equals(PROVIDERS[3])) return prefsHolder.getString("model_deepseek",DEEPSEEK_MODELS[0]);
+        if(provider.equals(PROVIDERS[4])) return prefsHolder.getString("model_mistral",MISTRAL_MODELS[0]);
         return prefsHolder.getString("model_custom","");
     }
 
@@ -71,6 +86,8 @@ public class MainActivity extends Activity {
         if(provider.equals(PROVIDERS[0])) c.endpoint=OPENROUTER_ENDPOINT;
         else if(provider.equals(PROVIDERS[1])) c.endpoint=GEMINI_ENDPOINT;
         else if(provider.equals(PROVIDERS[2])) c.endpoint=OPENAI_ENDPOINT;
+        else if(provider.equals(PROVIDERS[3])) c.endpoint=DEEPSEEK_ENDPOINT;
+        else if(provider.equals(PROVIDERS[4])) c.endpoint=MISTRAL_ENDPOINT;
         else c.endpoint=prefsHolder.getString("endpoint_custom","");
         c.model=providerModel(provider);
         c.apiKey=providerKey(provider);
@@ -79,7 +96,7 @@ public class MainActivity extends Activity {
 
     private List<TranslationRouter.Provider> fallbackProviders(){
         String selected=providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT));
-        String[] order={selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3]};
+        String[] order={selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3],PROVIDERS[4],PROVIDERS[5]};
         List<TranslationRouter.Provider> out=new ArrayList<>();
         HashSet<String> seen=new HashSet<>();
         for(String p:order){
@@ -93,11 +110,11 @@ public class MainActivity extends Activity {
     }
 
     private int indexOf(String[] a,String value){for(int i=0;i<a.length;i++)if(a[i].equals(value))return i;return -1;}
-    private String providerFor(String endpoint){if(endpoint!=null&&endpoint.contains("openrouter.ai"))return PROVIDERS[0];if(endpoint!=null&&endpoint.contains("generativelanguage.googleapis.com"))return PROVIDERS[1];if(endpoint!=null&&endpoint.contains("api.openai.com"))return PROVIDERS[2];return PROVIDERS[3];}
+    private String providerFor(String endpoint){if(endpoint!=null&&endpoint.contains("openrouter.ai"))return PROVIDERS[0];if(endpoint!=null&&endpoint.contains("generativelanguage.googleapis.com"))return PROVIDERS[1];if(endpoint!=null&&endpoint.contains("api.openai.com"))return PROVIDERS[2];if(endpoint!=null&&endpoint.contains("api.deepseek.com"))return PROVIDERS[3];if(endpoint!=null&&endpoint.contains("api.mistral.ai"))return PROVIDERS[4];return PROVIDERS[5];}
 
-    private String[] modelsFor(String p){return p.equals(PROVIDERS[0])?OR_MODELS:p.equals(PROVIDERS[1])?GEMINI_MODELS:p.equals(PROVIDERS[2])?OPENAI_MODELS:new String[]{providerModel(PROVIDERS[3])};}
+    private String[] modelsFor(String p){return p.equals(PROVIDERS[0])?OR_MODELS:p.equals(PROVIDERS[1])?GEMINI_MODELS:p.equals(PROVIDERS[2])?OPENAI_MODELS:p.equals(PROVIDERS[3])?DEEPSEEK_MODELS:p.equals(PROVIDERS[4])?MISTRAL_MODELS:new String[]{providerModel(PROVIDERS[5])};}
 
-    private String[] labelsFor(String p){return p.equals(PROVIDERS[0])?OR_LABELS:p.equals(PROVIDERS[1])?GEMINI_LABELS:OPENAI_MODELS;}
+    private String[] labelsFor(String p){return p.equals(PROVIDERS[0])?OR_LABELS:p.equals(PROVIDERS[1])?GEMINI_LABELS:p.equals(PROVIDERS[2])?OPENAI_LABELS:p.equals(PROVIDERS[3])?DEEPSEEK_LABELS:p.equals(PROVIDERS[4])?MISTRAL_LABELS:new String[]{providerModel(PROVIDERS[5])};}
 
     private void settings(){
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(40,10,40,10);
@@ -125,7 +142,13 @@ public class MainActivity extends Activity {
                 note.setText("Gemini API tương thích OpenAI; model hiện tại lấy từ tài liệu Google.");
             } else if(p.equals(PROVIDERS[2])){
                 ep.setText(OPENAI_ENDPOINT);customModel.setVisibility(View.GONE);
-                note.setText("OpenAI API có thể yêu cầu billing/credit.");
+                note.setText("OpenAI API là provider trả phí; chi phí tính theo token và tài khoản API.");
+            } else if(p.equals(PROVIDERS[3])){
+                ep.setText(DEEPSEEK_ENDPOINT);customModel.setVisibility(View.GONE);
+                note.setText("DeepSeek API trả phí theo token; model Flash và V4 Pro dùng API OpenAI-compatible.");
+            } else if(p.equals(PROVIDERS[4])){
+                ep.setText(MISTRAL_ENDPOINT);customModel.setVisibility(View.GONE);
+                note.setText("Mistral API trả phí theo token; hỗ trợ Chat Completions.");
             } else {
                 ep.setText(prefsHolder.getString("endpoint_custom",""));
                 customModel.setText(providerModel(PROVIDERS[3]));customModel.setVisibility(View.VISIBLE);
@@ -145,6 +168,12 @@ public class MainActivity extends Activity {
             } else if(p.equals(PROVIDERS[2])){
                 keyLink.setText("🔑 Lấy OpenAI API key");keyLink.setVisibility(View.VISIBLE);
                 keyLink.setOnClickListener(v->openUrl("https://platform.openai.com/api-keys"));
+            } else if(p.equals(PROVIDERS[3])){
+                keyLink.setText("🔑 Lấy DeepSeek API key");keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(v->openUrl("https://platform.deepseek.com/api_keys"));
+            } else if(p.equals(PROVIDERS[4])){
+                keyLink.setText("🔑 Lấy Mistral API key");keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(v->openUrl("https://console.mistral.ai/api-keys/"));
             } else {
                 keyLink.setText("ℹ️ Provider tùy chỉnh");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->{});
             }
@@ -182,6 +211,8 @@ public class MainActivity extends Activity {
             if(p.equals(PROVIDERS[0])) e.putString(PREF_OR_KEY,enteredKey).putString("model_openrouter",selectedModel);
             else if(p.equals(PROVIDERS[1])) e.putString(PREF_GEMINI_KEY,enteredKey).putString("model_gemini",selectedModel);
             else if(p.equals(PROVIDERS[2])) e.putString(PREF_OPENAI_KEY,enteredKey).putString("model_openai",selectedModel);
+            else if(p.equals(PROVIDERS[3])) e.putString(PREF_DEEPSEEK_KEY,enteredKey).putString("model_deepseek",selectedModel);
+            else if(p.equals(PROVIDERS[4])) e.putString(PREF_MISTRAL_KEY,enteredKey).putString("model_mistral",selectedModel);
             else e.putString(PREF_CUSTOM_KEY,enteredKey).putString("endpoint_custom",ep.getText().toString().trim()).putString("model_custom",selectedModel);
             e.apply();
             status.setText("AI: "+p+" / "+selectedModel+" | Failover: "+fallbackProviders().size()+" provider");
