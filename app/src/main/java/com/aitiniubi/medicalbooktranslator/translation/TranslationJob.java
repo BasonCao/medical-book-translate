@@ -112,7 +112,7 @@ public final class TranslationJob {
     private static boolean shouldTranslate(String attrs,String plain){
         if(plain.length()<2||!plain.matches("(?s).*\\p{L}.*"))return false;
         String a=attrs==null?"":attrs.toLowerCase(Locale.US);
-        if(a.matches(".*\\b(reflist|references|bibliography|bib|doi|url)\\b.*"))return false;
+        if(a.matches(".*\\b(ref|ref1|reflist|references|bibliography|bib|doi|url|tsource|tsource1|figcredit|fignum)\\b.*"))return false;
         String compact=plain.replaceAll("[^A-Za-z0-9-]","");
         if(compact.length()<=10&&compact.matches("[A-Za-z][A-Za-z0-9-]+"))return false;
         boolean vi=plain.matches("(?s).*?[ÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚĂĐĨŨƠàáâãèéêìíòóôõùúăđĩũơƯưẠ-ỹ].*");
