@@ -74,7 +74,7 @@ public final class TranslationJob {
                         rebuild(source,draft,units,doneMap);
                         start+=batch.size();
                     }catch(Exception e){
-                        store.saveManifest(sourceHash,source.getName(),units.size(),done);
+                        store.saveManifest(sourceHash,source.getName(),total,done);
                         File draft=new File(workspace,"translated-current.epub");
                         rebuild(source,draft,units,doneMap);
                         listener.onPaused(draft,done,total,e);return;
