@@ -60,7 +60,7 @@ public final class OpenAICompatibleTranslator {
                             .url(endpoint)
                             .post(requestBody)
                             .header("Accept","application/json")
-                            .header("User-Agent","MedicalBookTranslator/1.3 Android");
+                            .header("User-Agent","MedicalBookTranslator/1.4 Android");
                     if(c.apiKey!=null&&!c.apiKey.trim().isEmpty()) {
                         rb.header("Authorization","Bearer "+c.apiKey.trim());
                     }
@@ -77,6 +77,9 @@ public final class OpenAICompatibleTranslator {
                         }
 
                         String error=extractError(resp);
+                        if(code==429 && isDailyFreeQuotaExhausted(error)) {
+                            throw new IOException(formatHttpError(code, endpoint, error));
+                        }
                         if((code==429 || code>=500) && attempt<MAX_ATTEMPTS) {
                             long retryMs = code==429 ? retryDelayMillis(response, resp) : 700L*attempt;
                             sleepBeforeRetryMillis(retryMs);
@@ -271,6 +274,15 @@ public final class OpenAICompatibleTranslator {
             return out.toString().trim();
         }
         return String.valueOf(value).trim();
+    }
+
+    private static boolean isDailyFreeQuotaExhausted(String error) {
+        if(error==null) return false;
+        String s=error.toLowerCase(Locale.US);
+        return s.contains("free-models-per-day")
+                || s.contains("free model requests per day")
+                || s.contains("requests per day")
+                || s.contains("add 10 credits");
     }
 
     private static long retryDelayMillis(Response response,String body) {
