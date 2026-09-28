@@ -126,6 +126,12 @@ public final class TranslationStateStore {
         return hex(md.digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 
+    private static String hex(byte[] bytes) {
+        StringBuilder out = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) out.append(String.format(Locale.US, "%02x", b & 0xff));
+        return out.toString();
+    }
+
     private static String safe(String id) {
         return id.replaceAll("[^A-Za-z0-9._-]", "_");
     }
