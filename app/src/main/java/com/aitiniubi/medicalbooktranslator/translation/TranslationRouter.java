@@ -24,6 +24,7 @@ public final class TranslationRouter {
     private static final Map<String,Long> DISABLED_UNTIL = new ConcurrentHashMap<>();
     private static final long DAILY_QUOTA_COOLDOWN_MS = 24L * 60L * 60L * 1000L;
     private static final long RATE_LIMIT_COOLDOWN_MS = 60L * 1000L;
+    private static final long TEMPORARY_QUOTA_COOLDOWN_MS = 15L * 60L * 1000L;
 
     private TranslationRouter() {}
 
@@ -48,7 +49,7 @@ public final class TranslationRouter {
                 if (isDailyQuota(message)) {
                     DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + DAILY_QUOTA_COOLDOWN_MS);
                 } else if (isQuotaOrRateLimit(message)) {
-                    DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS);
+                    DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + (isTemporaryQuota(message) ? TEMPORARY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS));
                 }
                 failures.add(p.name + ": " + message);
             }
@@ -80,6 +81,8 @@ public final class TranslationRouter {
                 || s.contains("requests per day")
                 || s.contains("add 10 credits");
     }
+
+    private static boolean isTemporaryQuota(String message) { if (message == null) return false; String s = message.toLowerCase(Locale.US); return s.contains("requests per minute") || s.contains("tokens per minute") || s.contains("rpm") || s.contains("tpm") || s.contains("retry-after"); }
 
     private static boolean isBlank(String s) {
         return s == null || s.trim().isEmpty();
