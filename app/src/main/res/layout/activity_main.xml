@@ -7,7 +7,7 @@
     android:layout_height="match_parent">
 
     <TextView
-        android:text="Medical Book Translator V1.5"
+        android:text="Medical Book Translator V1.6"
         android:textSize="24sp"
         android:textStyle="bold"
         android:textColor="#2C5D6D"
