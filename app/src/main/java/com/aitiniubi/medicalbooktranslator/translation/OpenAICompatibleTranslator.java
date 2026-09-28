@@ -45,6 +45,8 @@ public final class OpenAICompatibleTranslator {
             msgs.put(new JSONObject().put("role","user").put("content",userText));
             body.put("messages",msgs);
             body.put("temperature",0.1);
+            // Keep enough output budget for a full translated paragraph while avoiding excessive reasoning-only output.
+            body.put("max_tokens",4096);
         }
 
         byte[] payload=body.toString().getBytes(StandardCharsets.UTF_8);
@@ -229,14 +231,16 @@ public final class OpenAICompatibleTranslator {
         if(msg==null) throw new IOException("Provider trả về message không hợp lệ.");
         Object content=msg.opt("content");
         String text=extractContentText(content);
+        if(text.isEmpty()) text=extractContentText(choice.opt("text"));
+        if(text.isEmpty()) text=extractContentText(choice.opt("output_text"));
         if(!text.isEmpty()) return cleanModelOutput(text);
 
         // Some OpenAI-compatible providers return structured content blocks.
         Object reasoning=msg.opt("reasoning");
         String reasoningText=extractContentText(reasoning);
         if(!reasoningText.isEmpty()) {
-            throw new IOException("Provider chỉ trả về reasoning mà không có nội dung dịch. finish_reason="
-                    +choice.optString("finish_reason","unknown")+". Hãy đổi model OpenRouter.");
+            throw new IOException("OpenRouter model chỉ trả về reasoning mà không có nội dung dịch. finish_reason="
+                    +choice.optString("finish_reason","unknown")+". Hãy chọn model FREE cố định thay cho Auto Free Router.");
         }
 
         throw new IOException("Provider không trả về nội dung bản dịch. finish_reason="
