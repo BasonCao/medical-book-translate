@@ -1,16 +1,22 @@
-# Medical Book Translator — Android V1
+# Medical Book Translator — Android V1.5
 
 Ứng dụng Android mobile-first để nhập EPUB, phân tích cấu trúc, dịch nội dung XHTML qua một API AI tương thích OpenAI và xuất lại EPUB mà không thay đổi asset/CSS/hình ảnh không cần thiết.
 
-## V1 hiện có
+## V1.5 hiện có
 - Chọn EPUB bằng Android Storage Access Framework.
 - Kiểm tra `mimetype` và `META-INF/container.xml`.
 - Đọc OPF manifest và nhận diện XHTML, CSS, image assets.
 - Phân tích thống kê chapter: paragraphs, figures, image references, tables.
 - Cấu hình endpoint AI, model và API key bằng giao diện app; không hard-code secret.
-- Dịch các block XHTML (`p`, `h1`–`h6`, `figcaption`, `caption`) qua API OpenAI-compatible.
+- Dịch theo **translation unit**: paragraph, heading, figcaption/caption, list và table-cell HTML (`th`/`td`), thay vì gửi cả XHTML cho AI.
+- Batch tối đa 8 unit hoặc khoảng 12.000 ký tự/request để giảm số request và chi phí free-tier.
+- Lưu từng unit ngay sau khi dịch thành công; có `progress.json` + thư mục `units/` để resume sau khi app bị đóng, mất mạng hoặc hết quota.
+- Sau mỗi batch tạo `translated-current.epub`, nên phần đã dịch không bị mất.
+- Nếu toàn bộ provider thất bại, trạng thái chuyển sang **PAUSED**, không restart từ đầu; bấm **Dịch / Tiếp tục** để chạy tiếp.
+- Nếu nhập một EPUB đã dịch một phần, heuristic tiếng Việt sẽ tránh dịch lại phần đã có tiếng Việt.
+- Giữ nguyên EPUB asset/CSS/image/ID/class không liên quan; chỉ thay nội dung translation unit.
 - Prompt yêu cầu giữ HTML/XML tags, số, đơn vị, viết tắt và citation.
-- Rebuild EPUB và giữ toàn bộ file không được thay thế nguyên trạng.
+- Rebuild EPUB sau mỗi batch và giữ toàn bộ file không được thay thế nguyên trạng.
 - `mimetype` được ghi STORED theo yêu cầu EPUB.
 - Xuất file qua Android `ACTION_CREATE_DOCUMENT`.
 
@@ -39,7 +45,8 @@ Nếu dùng provider tương thích OpenAI chỉ có Chat Completions, nhập tr
 
 Khuyến nghị production: dùng backend proxy riêng để API key không nằm trên thiết bị.
 
-## Lưu ý V1
-- Chưa dịch chữ nằm trực tiếp bên trong ảnh/bảng PNG. Đây sẽ là Image/Table Translation module V1.1.
-- Chưa có translation-memory UI và resume từng segment sau khi process bị kill; đây là V1.2.
-- Dịch HTML fragment phụ thuộc việc model tuân thủ yêu cầu giữ tag. Production version nên thêm HTML validator/repair trước khi rebuild.
+## Lưu ý V1.5
+- Chữ nằm trực tiếp trong ảnh/bảng PNG vẫn giữ nguyên ảnh gốc; module OCR/image-table translation sẽ là bước tiếp theo.
+- Translation queue hiện lưu local trên Android, không cần backend và không hard-code API key.
+- Các unit đã dịch được khóa theo `sourceHash`; đổi source sẽ tạo unit mới, tránh áp nhầm bản dịch vào nội dung khác.
+- V1.5 ưu tiên độ bền/resume và tiết kiệm request. Production version tiếp theo nên bổ sung HTML validator/repair, terminology memory UI và medical QA tự động.
