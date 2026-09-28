@@ -17,7 +17,7 @@ public final class TranslationJob {
     }
 
     private static final Pattern BLOCK=Pattern.compile(
-        "<(p|h1|h2|h3|h4|h5|h6|figcaption|caption|th|td|li)\\b([^>]*)>(.*?)</(p|h1|h2|h3|h4|h5|h6|figcaption|caption|th|td|li)>",
+        "<(p|h1|h2|h3|h4|h5|h6|figcaption|caption|th|td|li)\\b([^>]*)>(.*?)</\\1>",
         Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
     private static final int MAX_BATCH_UNITS=8;
     private static final int MAX_BATCH_CHARS=12000;
