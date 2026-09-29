@@ -252,8 +252,21 @@ public final class PdfTranslationJob {
 
     private static FontSlot findFont(int codePoint,List<FontSlot> fonts)
             throws IOException{
+        String glyph=new String(Character.toChars(codePoint));
+
+        // Do not use PDType0Font.hasGlyph() here. On some Android/PDFBox
+        // combinations it reports false for valid Vietnamese glyphs even
+        // though the font encoder can encode them correctly. That caused the
+        // previous build to replace characters such as "ệ", "ả" and "đ"
+        // with ASCII "?". The authoritative test is the same encoder that
+        // PDPageContentStream.showText() uses.
         for(FontSlot slot:fonts){
-            if(slot.font.hasGlyph(codePoint))return slot;
+            try{
+                slot.font.encode(glyph);
+                return slot;
+            }catch(IOException ignored){
+                // Try the next Unicode fallback font.
+            }
         }
         return null;
     }
