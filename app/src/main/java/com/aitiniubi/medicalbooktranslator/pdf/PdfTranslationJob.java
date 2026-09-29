@@ -87,13 +87,13 @@ public final class PdfTranslationJob {
     private static void buildReflowPdf(Context context,File source,File output,Map<Integer,String> translations)throws Exception{
         PDFBoxResourceLoader.init(context.getApplicationContext());
         try(PDDocument src=PDDocument.load(source);PDDocument out=new PDDocument()){
-            PDType0Font font;
-            File roboto=new File("/system/fonts/Roboto-Regular.ttf");
-            File noto=new File("/system/fonts/NotoSans-Regular.ttf");
-            if(roboto.isFile())font=PDType0Font.load(out,new FileInputStream(roboto),true);
-            else if(noto.isFile())font=PDType0Font.load(out,new FileInputStream(noto),true);
-            else throw new IOException("Thiết bị không có font Unicode hệ thống để tạo PDF tiếng Việt.");
+            List<FontSlot> fonts=loadFonts(out);
+            if(fonts.isEmpty()){
+                throw new IOException("Thiết bị không có font TTF Unicode để tạo PDF tiếng Việt.");
+            }
 
+            // The primary font is used for normal Vietnamese text; symbol/math fonts
+            // are selected per code point so one unsupported glyph cannot abort export.
             for(int i=0;i<src.getNumberOfPages();i++){
                 PDRectangle box=src.getPage(i).getMediaBox();
                 PDPage page=new PDPage(new PDRectangle(box.getWidth(),box.getHeight()));
@@ -101,12 +101,14 @@ public final class PdfTranslationJob {
                 String text=sanitizeForPdf(translations.get(i+1));
                 try(PDPageContentStream cs=new PDPageContentStream(out,page)){
                     cs.beginText();
-                    cs.setFont(font,10);
                     cs.setLeading(14);
                     cs.newLineAtOffset(42,box.getHeight()-48);
                     float max=box.getWidth()-84;
-                    for(String para:text.replace("\r","").split("\n")){
-                        for(String line:wrap(para,font,10,max)){cs.showText(line);cs.newLine();}
+                    for(String para:text.replace("\\r","").split("\\n",-1)){
+                        for(String line:wrap(para,fonts,10,max)){
+                            showTextWithFallback(cs,line,fonts,10);
+                            cs.newLine();
+                        }
                         cs.newLine();
                     }
                     cs.endText();
@@ -116,12 +118,49 @@ public final class PdfTranslationJob {
         }
     }
 
+    private static List<FontSlot> loadFonts(PDDocument out)throws IOException{
+        List<FontSlot> fonts=new ArrayList<>();
+
+        // Keep Roboto/Noto Sans first for Vietnamese and Latin text.
+        addFontIfPresent(out,fonts,"Roboto",
+                "/system/fonts/Roboto-Regular.ttf");
+        addFontIfPresent(out,fonts,"NotoSans",
+                "/system/fonts/NotoSans-Regular.ttf");
+
+        // Android devices commonly ship these dedicated Unicode symbol fonts.
+        // They cover characters such as U+25E6 (◦), mathematical symbols and arrows.
+        addFontIfPresent(out,fonts,"NotoSansSymbols",
+                "/system/fonts/NotoSansSymbols-Regular.ttf");
+        addFontIfPresent(out,fonts,"NotoSansSymbols2",
+                "/system/fonts/NotoSansSymbols2-Regular.ttf");
+        addFontIfPresent(out,fonts,"NotoSansMath",
+                "/system/fonts/NotoSansMath-Regular.ttf");
+        addFontIfPresent(out,fonts,"DroidSansFallback",
+                "/system/fonts/DroidSansFallback.ttf");
+
+        return fonts;
+    }
+
+    private static void addFontIfPresent(PDDocument out,List<FontSlot> fonts,
+                                         String name,String path)throws IOException{
+        File file=new File(path);
+        if(!file.isFile())return;
+        try(FileInputStream in=new FileInputStream(file)){
+            fonts.add(new FontSlot(name,PDType0Font.load(out,in,true)));
+        }catch(Exception ignored){
+            // A device may expose a font path that PDFBox cannot parse. Continue
+            // with the remaining fonts instead of failing the whole PDF export.
+        }
+    }
+
     private static String sanitizeForPdf(String text){
         if(text==null||text.isEmpty())return "";
         StringBuilder out=new StringBuilder(text.length());
         for(int i=0;i<text.length();){
             int cp=text.codePointAt(i);i+=Character.charCount(cp);
-            boolean privateUse=(cp>=0xE000&&cp<=0xF8FF)||(cp>=0xF0000&&cp<=0xFFFFD)||(cp>=0x100000&&cp<=0x10FFFD);
+            boolean privateUse=(cp>=0xE000&&cp<=0xF8FF)
+                    ||(cp>=0xF0000&&cp<=0xFFFFD)
+                    ||(cp>=0x100000&&cp<=0x10FFFD);
             if(privateUse||cp==0xFFFD)continue;
             if(Character.isISOControl(cp)&&cp!=10&&cp!=9&&cp!=13)continue;
             out.appendCodePoint(cp);
@@ -129,19 +168,104 @@ public final class PdfTranslationJob {
         return out.toString();
     }
 
-    private static List<String> wrap(String text,PDType0Font font,float size,float max)throws IOException{
+    private static List<String> wrap(String text,List<FontSlot> fonts,
+                                      float size,float max)throws IOException{
         List<String> lines=new ArrayList<>();
-        if(text==null||text.isEmpty()){lines.add("");return lines;}
+        if(text==null||text.isEmpty()){
+            lines.add("");
+            return lines;
+        }
+
         StringBuilder line=new StringBuilder();
         for(String word:text.trim().split("\\s+")){
             String candidate=line.length()==0?word:line+" "+word;
-            if(font.getStringWidth(candidate)/1000f*size>max&&line.length()>0){
+            if(measureWidth(candidate,fonts,size)>max&&line.length()>0){
                 lines.add(line.toString());
                 line=new StringBuilder(word);
-            }else line=new StringBuilder(candidate);
+            }else{
+                line=new StringBuilder(candidate);
+            }
         }
         if(line.length()>0)lines.add(line.toString());
         return lines;
+    }
+
+    private static float measureWidth(String text,List<FontSlot> fonts,
+                                      float size)throws IOException{
+        if(text==null||text.isEmpty())return 0f;
+        float width=0f;
+        int i=0;
+        while(i<text.length()){
+            int cp=text.codePointAt(i);
+            int next=i+Character.charCount(cp);
+            FontSlot font=findFont(cp,fonts);
+            String glyphText=text.substring(i,next);
+            if(font!=null){
+                width+=font.font.getStringWidth(glyphText)/1000f*size;
+            }else{
+                // The fallback replacement is a single ASCII glyph supported by
+                // every normal text font, preventing PDFBox from throwing.
+                FontSlot primary=fonts.get(0);
+                width+=primary.font.getStringWidth("?")/1000f*size;
+            }
+            i=next;
+        }
+        return width;
+    }
+
+    private static void showTextWithFallback(PDPageContentStream cs,String text,
+                                              List<FontSlot> fonts,float size)
+            throws IOException{
+        if(text==null||text.isEmpty())return;
+
+        FontSlot active=null;
+        StringBuilder run=new StringBuilder();
+
+        int i=0;
+        while(i<text.length()){
+            int cp=text.codePointAt(i);
+            int next=i+Character.charCount(cp);
+            FontSlot selected=findFont(cp,fonts);
+            if(selected==null)selected=fonts.get(0);
+
+            if(active!=selected&&run.length()>0){
+                cs.setFont(active.font,size);
+                cs.showText(run.toString());
+                run.setLength(0);
+            }
+
+            if(findFont(cp,fonts)!=null){
+                run.appendCodePoint(cp);
+            }else{
+                run.append('?');
+            }
+
+            active=selected;
+            i=next;
+        }
+
+        if(run.length()>0){
+            cs.setFont(active.font,size);
+            cs.showText(run.toString());
+        }
+    }
+
+    private static FontSlot findFont(int codePoint,List<FontSlot> fonts)
+            throws IOException{
+        for(FontSlot slot:fonts){
+            if(slot.font.hasGlyph(codePoint))return slot;
+        }
+        return null;
+    }
+
+    private static final class FontSlot{
+        final String name;
+        final PDType0Font font;
+
+        FontSlot(String name,PDType0Font font){
+            this.name=name;
+            this.font=font;
+        }
     }
 
     private static void save(Properties p,File f)throws IOException{
