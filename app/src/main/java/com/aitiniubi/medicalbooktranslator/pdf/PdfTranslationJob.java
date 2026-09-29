@@ -54,6 +54,10 @@ public final class PdfTranslationJob {
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
 
+                // Extract remaining pages on one PDFBox thread, then run the
+                // expensive AI requests concurrently. PDFBox itself is not shared
+                // across worker threads.
+                Map<Integer,String> sourcePages=new HashMap<>();
                 try(PDDocument doc=PDDocument.load(source)){
                     PDFTextStripper stripper=new PDFTextStripper();
                     for(int page=1;page<=total;page++){
@@ -63,15 +67,49 @@ public final class PdfTranslationJob {
                         if(sourceText==null||sourceText.trim().isEmpty()){
                             throw new IOException("Trang "+page+" không có text layer. PDF scan/OCR không được hỗ trợ.");
                         }
+                        sourcePages.put(page,sourceText);
+                    }
+                }
+
+                // V1.7 was strictly sequential (one AI request at a time).
+                // V1.8 keeps a bounded pool of three requests to improve throughput
+                // without opening an excessive number of connections on Android.
+                final int parallelism=3;
+                java.util.concurrent.ExecutorService pool=
+                        java.util.concurrent.Executors.newFixedThreadPool(parallelism);
+                java.util.concurrent.CompletionService<PageResult> completion=
+                        new java.util.concurrent.ExecutorCompletionService<>(pool);
+                int submitted=0;
+                for(Map.Entry<Integer,String> entry:sourcePages.entrySet()){
+                    final int page=entry.getKey();
+                    final String sourceText=entry.getValue();
+                    completion.submit(()->{
                         String prompt="Translate this medical textbook page from English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations, formulas, gene/drug names and paragraph breaks. Return plain text only.\n\n"+sourceText;
                         String translated=TranslationRouter.translate(prompt,"Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers);
                         if(translated==null||translated.trim().isEmpty())throw new IOException("AI trả về bản dịch rỗng ở trang "+page);
-                        translations.put(page,translated.trim());
-                        state.setProperty("page."+page,translated.trim());
-                        save(state,stateFile);
+                        return new PageResult(page,translated.trim());
+                    });
+                    submitted++;
+                }
+
+                try{
+                    for(int n=0;n<submitted;n++){
+                        PageResult result=completion.take().get();
+                        translations.put(result.page,result.text);
+                        synchronized(state){
+                            state.setProperty("page."+result.page,result.text);
+                            save(state,stateFile);
+                        }
                         done++;
-                        listener.onProgress(done,total,page,"Đã dịch PDF trang "+page+"/"+total);
+                        listener.onProgress(done,total,result.page,
+                                "Đã dịch PDF "+done+"/"+total+" trang | tối đa "+parallelism+" trang song song");
                     }
+                }catch(java.util.concurrent.ExecutionException e){
+                    Throwable cause=e.getCause();
+                    if(cause instanceof Exception)throw (Exception)cause;
+                    throw new IOException("Lỗi dịch PDF.",cause);
+                }finally{
+                    pool.shutdownNow();
                 }
 
                 File draft=new File(workspace,"translated-current.pdf");
@@ -279,6 +317,12 @@ public final class PdfTranslationJob {
             this.name=name;
             this.font=font;
         }
+    }
+
+    private static final class PageResult{
+        final int page;
+        final String text;
+        PageResult(int page,String text){this.page=page;this.text=text;}
     }
 
     private static void save(Properties p,File f)throws IOException{
