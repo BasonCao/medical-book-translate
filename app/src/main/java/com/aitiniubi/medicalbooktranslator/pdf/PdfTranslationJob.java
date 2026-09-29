@@ -239,7 +239,12 @@ public final class PdfTranslationJob {
             FontSlot font=findFont(cp,fonts);
             String glyphText=text.substring(i,next);
             if(font!=null){
-                width+=font.font.getStringWidth(glyphText)/1000f*size;
+                try{
+                    width+=font.font.getStringWidth(glyphText)/1000f*size;
+                }catch(Exception unsupported){
+                    FontSlot primary=fonts.get(0);
+                    width+=primary.font.getStringWidth("?")/1000f*size;
+                }
             }else{
                 // The fallback replacement is a single ASCII glyph supported by
                 // every normal text font, preventing PDFBox from throwing.
@@ -300,9 +305,13 @@ public final class PdfTranslationJob {
         // PDPageContentStream.showText() uses.
         for(FontSlot slot:fonts){
             try{
+                // Test both encoding and width calculation. Some Android/PDFBox
+                // builds can report encode() successfully but still throw the
+                // exact "No glyph for U+...." error from getStringWidth().
                 slot.font.encode(glyph);
+                slot.font.getStringWidth(glyph);
                 return slot;
-            }catch(IOException ignored){
+            }catch(Exception ignored){
                 // Try the next Unicode fallback font.
             }
         }
