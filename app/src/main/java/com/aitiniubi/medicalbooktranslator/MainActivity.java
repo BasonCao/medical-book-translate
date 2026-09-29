@@ -8,6 +8,7 @@ import android.text.InputType;
 import android.view.*;
 import android.widget.*;
 import com.aitiniubi.medicalbooktranslator.epub.*;
+import com.aitiniubi.medicalbooktranslator.pdf.*;
 import com.aitiniubi.medicalbooktranslator.translation.*;
 import java.io.*;
 import java.util.*;
@@ -49,6 +50,8 @@ public class MainActivity extends Activity {
     private Button analyze,translate,export,reset;
     private File selectedFile,lastOutput,workspace;
     private EpubBook book;
+    private PdfBook pdfBook;
+    private boolean pdfMode=false;
     private android.content.SharedPreferences prefsHolder;
     private volatile boolean translating=false;
 
@@ -79,20 +82,25 @@ public class MainActivity extends Activity {
     private void restoreWorkspace(){
         String path=prefsHolder.getString("activeWorkspace","");
         if(path.isEmpty())return;
-        File ws=new File(path),src=new File(ws,"source.epub");
-        if(!src.isFile())return;
-        workspace=ws;selectedFile=src;
-        File draft=new File(ws,"translated-current.epub");
+        File ws=new File(path);
+        File epub=new File(ws,"source.epub"), pdf=new File(ws,"source.pdf");
+        if(epub.isFile()){ selectedFile=epub; pdfMode=false; }
+        else if(pdf.isFile()){ selectedFile=pdf; pdfMode=true; }
+        else return;
+        workspace=ws;
+        File draft=new File(ws,pdfMode?"translated-current.pdf":"translated-current.epub");
         lastOutput=draft.isFile()?draft:null;
         analyze.setEnabled(true);translate.setEnabled(true);export.setEnabled(lastOutput!=null);
         TranslationStateStore store=new TranslationStateStore(ws);
-        status.setText("📖 Workspace đã lưu\n"+src.getName()+"\n"+store.summary()+"\nCó thể bấm Dịch / Tiếp tục.");
-        report.setText("Tiến độ dịch được lưu bền vững trong máy. Hết quota hoặc đóng app vẫn có thể tiếp tục.");
+        status.setText("📖 Workspace đã lưu\n"+selectedFile.getName()+"\n"+store.summary()+"\nCó thể bấm Dịch / Tiếp tục.");
+        report.setText(pdfMode ? "PDF text layer: có thể dịch. PDF scan/image-only không hỗ trợ." : "Tiến độ EPUB được lưu bền vững trong máy. Hết quota hoặc đóng app vẫn có thể tiếp tục.");
     }
 
     private void pick(){
         Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        i.setType("application/epub+zip");i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"application/epub+zip","application/pdf"});
+        i.addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(i,10);
     }
 
@@ -100,33 +108,39 @@ public class MainActivity extends Activity {
         super.onActivityResult(r,c,d);
         if(r==11&&c==RESULT_OK&&d!=null){
             try{
-                if(lastOutput==null||!lastOutput.isFile())throw new IOException("Chưa có EPUB draft để xuất.");
+                if(lastOutput==null||!lastOutput.isFile())throw new IOException(pdfMode?"Chưa có PDF draft để xuất.":"Chưa có EPUB draft để xuất.");
                 try(InputStream in=new FileInputStream(lastOutput);OutputStream out=getContentResolver().openOutputStream(d.getData())){
                     byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);
                 }
-                Toast.makeText(this,"Đã xuất EPUB",Toast.LENGTH_LONG).show();
+                Toast.makeText(this,pdfMode?"Đã xuất PDF":"Đã xuất EPUB",Toast.LENGTH_LONG).show();
             }catch(Exception e){showError(e);}
             return;
         }
         if(r==10&&c==RESULT_OK&&d!=null){
             try{
                 Uri u=d.getData();
-                File temp=new File(getCacheDir(),"picked.epub");
+                String mime=getContentResolver().getType(u);
+                String name=u.getLastPathSegment()==null?"":u.getLastPathSegment().toLowerCase(Locale.US);
+                pdfMode="application/pdf".equalsIgnoreCase(mime)||name.endsWith(".pdf");
+                String ext=pdfMode?".pdf":".epub";
+                File temp=new File(getCacheDir(),"picked"+ext);
                 try(InputStream in=getContentResolver().openInputStream(u);FileOutputStream out=new FileOutputStream(temp)){
+                    if(in==null)throw new IOException("Không mở được file đã chọn.");
                     byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);
                 }
+                if(pdfMode && temp.length()<5)throw new IOException("File PDF rỗng hoặc không hợp lệ.");
                 String hash=TranslationStateStore.sha256(temp);
                 workspace=new File(new File(getFilesDir(),"translation_workspaces"),hash);
                 if(!workspace.exists()&&!workspace.mkdirs())throw new IOException("Không tạo được translation workspace.");
-                selectedFile=new File(workspace,"source.epub");
+                selectedFile=new File(workspace,"source"+ext);
                 copyFile(temp,selectedFile);
                 temp.delete();
-                prefsHolder.edit().putString("activeWorkspace",workspace.getAbsolutePath()).apply();
-                File draft=new File(workspace,"translated-current.epub");
+                prefsHolder.edit().putString("activeWorkspace",workspace.getAbsolutePath()).putBoolean("activePdf",pdfMode).apply();
+                File draft=new File(workspace,pdfMode?"translated-current.pdf":"translated-current.epub");
                 lastOutput=draft.isFile()?draft:null;
                 analyze.setEnabled(true);translate.setEnabled(true);export.setEnabled(lastOutput!=null);
-                status.setText("Đã chọn: "+u.getLastPathSegment()+"\nWorkspace: "+workspace.getName());
-                report.setText("Bấm Phân tích EPUB để kiểm tra cấu trúc, hoặc Dịch / Tiếp tục để chạy translation queue.");
+                status.setText("Đã chọn: "+u.getLastPathSegment()+"\nLoại: "+(pdfMode?"PDF text layer":"EPUB")+"\nWorkspace: "+workspace.getName());
+                report.setText(pdfMode ? "Bấm Phân tích PDF. App chỉ dịch PDF có text layer, không xử lý PDF scan." : "Bấm Phân tích EPUB để kiểm tra cấu trúc, hoặc Dịch / Tiếp tục để chạy translation queue.");
             }catch(Exception e){showError(e);}
         }
     }
@@ -134,21 +148,33 @@ public class MainActivity extends Activity {
     private void analyze(){
         if(selectedFile==null)return;
         progress.setVisibility(View.VISIBLE);progress.setIndeterminate(true);
-        report.setText("Đang phân tích cấu trúc EPUB…");
+        report.setText(pdfMode ? "Đang phân tích PDF…" : "Đang phân tích cấu trúc EPUB…");
         new Thread(()->{
             try{
-                book=EpubAnalyzer.analyze(selectedFile);
-                runOnUiThread(()->{
-                    progress.setVisibility(View.GONE);progress.setIndeterminate(false);
-                    report.setText("EPUB: "+book.title+
-                            "\nFiles: "+book.totalFiles+
-                            "\nXHTML: "+book.xhtmlFiles.size()+
-                            "\nĐoạn văn: "+book.paragraphCount+
-                            "\nHình/ảnh: "+book.imageReferenceCount+
-                            "\nFigure: "+book.figureCount+
-                            "\nBảng: "+book.tableCount+
-                            "\n\nTranslation V1.5: paragraph + heading + list + table-cell queue, lưu từng unit và rebuild draft sau mỗi batch.");
-                });
+                if(pdfMode){
+                    pdfBook=PdfAnalyzer.analyze(this,selectedFile);
+                    runOnUiThread(()->{
+                        progress.setVisibility(View.GONE);progress.setIndeterminate(false);
+                        report.setText("PDF: "+pdfBook.title+
+                                "\nSố trang: "+pdfBook.pageCount+
+                                "\nTrang có text: "+pdfBook.textPages+
+                                "\nTrang không có text: "+pdfBook.emptyPages+
+                                "\n\nChỉ PDF có text layer được dịch. PDF scan/image-only sẽ không được xử lý.");
+                    });
+                } else {
+                    book=EpubAnalyzer.analyze(selectedFile);
+                    runOnUiThread(()->{
+                        progress.setVisibility(View.GONE);progress.setIndeterminate(false);
+                        report.setText("EPUB: "+book.title+
+                                "\nFiles: "+book.totalFiles+
+                                "\nXHTML: "+book.xhtmlFiles.size()+
+                                "\nĐoạn văn: "+book.paragraphCount+
+                                "\nHình/ảnh: "+book.imageReferenceCount+
+                                "\nFigure: "+book.figureCount+
+                                "\nBảng: "+book.tableCount+
+                                "\n\nTranslation V1.5: paragraph + heading + list + table-cell queue, lưu từng unit và rebuild draft sau mỗi batch.");
+                    });
+                }
             }catch(Exception e){runOnUiThread(()->showError(e));}
         }).start();
     }
@@ -370,6 +396,10 @@ public class MainActivity extends Activity {
         List<TranslationRouter.Provider> providers=fallbackProviders();
         if(providers.isEmpty()){settings();return;}
         if(workspace==null)workspace=new File(getFilesDir(),"translation_workspaces");
+        if(pdfMode){
+            translatePdf(providers);
+            return;
+        }
         File out=new File(workspace,"translated-final.epub");
         translating=true;translate.setEnabled(false);reset.setEnabled(false);
         export.setEnabled(false);progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
@@ -393,13 +423,37 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void translatePdf(List<TranslationRouter.Provider> providers){
+        File out=new File(workspace,"translated-final.pdf");
+        translating=true;translate.setEnabled(false);reset.setEnabled(false);export.setEnabled(false);
+        progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
+        report.setText("📄 Dịch PDF text layer. PDF scan/image-only không được hỗ trợ.");
+        PdfTranslationJob.run(this,selectedFile,out,workspace,providers,new PdfTranslationJob.Listener(){
+            public void onProgress(int d,int t,int page,String info){
+                int p=t<=0?0:(int)(100.0*d/t);
+                runOnUiThread(()->{progress.setProgress(p);status.setText("PDF: "+d+"/"+t+" trang | trang "+page);report.setText(info+"\n"+d+"/"+t+" trang");});
+            }
+            public void onDone(File f){
+                lastOutput=f;
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch PDF hoàn tất.\n"+f.getAbsolutePath()+"\n\nLưu ý: bản V1.7-PDF giữ số trang/kích thước trang nhưng dựng lại phần text; không giữ nguyên bố cục đồ họa 1:1.");});
+            }
+            public void onPaused(File draft,int d,int t,Exception reason){
+                lastOutput=draft;
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(draft!=null&&draft.isFile());progress.setProgress(t<=0?0:(int)(100.0*d/t));showError(reason);});
+            }
+            public void onError(Exception e){
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);showError(e);});
+            }
+        });
+    }
+
     private void resetProgress(){
         if(workspace==null)return;
         new AlertDialog.Builder(this).setTitle("Xóa tiến độ dịch?")
                 .setMessage("Chỉ xóa translation units và draft hiện tại. EPUB nguồn vẫn được giữ nguyên.")
                 .setPositiveButton("Xóa",(d,w)->{
-                    File units=new File(workspace,"units"),manifest=new File(workspace,"progress.json"),draft=new File(workspace,"translated-current.epub"),finalFile=new File(workspace,"translated-final.epub");
-                    deleteTree(units);manifest.delete();draft.delete();finalFile.delete();lastOutput=null;export.setEnabled(false);
+                    File units=new File(workspace,"units"),manifest=new File(workspace,"progress.json"),draftEpub=new File(workspace,"translated-current.epub"),finalEpub=new File(workspace,"translated-final.epub"),draftPdf=new File(workspace,"translated-current.pdf"),finalPdf=new File(workspace,"translated-final.pdf"),pdfState=new File(workspace,"pdf-progress.properties");
+                    deleteTree(units);manifest.delete();draftEpub.delete();finalEpub.delete();draftPdf.delete();finalPdf.delete();pdfState.delete();lastOutput=null;export.setEnabled(false);
                     report.setText("Đã xóa tiến độ. EPUB nguồn vẫn còn, có thể dịch lại từ đầu.");
                 }).setNegativeButton("Hủy",null).show();
     }
@@ -411,8 +465,11 @@ public class MainActivity extends Activity {
     }
 
     private void saveOutput(){
-        if(lastOutput==null||!lastOutput.isFile()){Toast.makeText(this,"Chưa có EPUB draft.",Toast.LENGTH_SHORT).show();return;}
-        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("application/epub+zip");i.putExtra(Intent.EXTRA_TITLE,lastOutput.getName());startActivityForResult(i,11);
+        if(lastOutput==null||!lastOutput.isFile()){Toast.makeText(this,pdfMode?"Chưa có PDF draft.":"Chưa có EPUB draft.",Toast.LENGTH_SHORT).show();return;}
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.setType(pdfMode?"application/pdf":"application/epub+zip");
+        i.putExtra(Intent.EXTRA_TITLE,lastOutput.getName());
+        startActivityForResult(i,11);
     }
 
     private void openUrl(String url){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){showError(e);}}
