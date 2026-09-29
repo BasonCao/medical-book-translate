@@ -121,13 +121,38 @@ public class MainActivity extends Activity {
                 Uri u=d.getData();
                 String mime=getContentResolver().getType(u);
                 String name=u.getLastPathSegment()==null?"":u.getLastPathSegment().toLowerCase(Locale.US);
-                pdfMode="application/pdf".equalsIgnoreCase(mime)||name.endsWith(".pdf");
-                String ext=pdfMode?".pdf":".epub";
-                File temp=new File(getCacheDir(),"picked"+ext);
+                // Do not trust the provider MIME/filename alone: some Android document providers
+                // expose a PDF as application/octet-stream or an opaque content name. Inspect the
+                // actual file signature so a PDF can never be sent into the EPUB ZIP parser.
+                File temp=new File(getCacheDir(),"picked.bin");
                 try(InputStream in=getContentResolver().openInputStream(u);FileOutputStream out=new FileOutputStream(temp)){
                     if(in==null)throw new IOException("Không mở được file đã chọn.");
                     byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);
                 }
+                byte[] header=new byte[8];
+                int headerRead=0;
+                try(InputStream hin=new FileInputStream(temp)){
+                    headerRead=hin.read(header);
+                }
+                boolean pdfSignature=headerRead>=5
+                        && header[0]=='%' && header[1]=='P' && header[2]=='D' && header[3]=='F' && header[4]=='-';
+                boolean zipSignature=headerRead>=4
+                        && header[0]=='P' && header[1]=='K'
+                        && ((header[2]==3 && header[3]==4) || (header[2]==5 && header[3]==6) || (header[2]==7 && header[3]==8));
+                if(pdfSignature){
+                    pdfMode=true;
+                }else if(zipSignature){
+                    pdfMode=false;
+                }else{
+                    throw new IOException("File không phải PDF/EPUB hợp lệ. App chỉ nhận PDF có text layer hoặc EPUB.");
+                }
+                String ext=pdfMode?".pdf":".epub";
+                File normalized=new File(getCacheDir(),"picked"+ext);
+                if(!temp.renameTo(normalized)){
+                    copyFile(temp,normalized);
+                    temp.delete();
+                }
+                temp=normalized;
                 if(pdfMode && temp.length()<5)throw new IOException("File PDF rỗng hoặc không hợp lệ.");
                 String hash=TranslationStateStore.sha256(temp);
                 workspace=new File(new File(getFilesDir(),"translation_workspaces"),hash);
