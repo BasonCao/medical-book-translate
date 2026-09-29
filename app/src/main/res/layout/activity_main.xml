@@ -16,7 +16,7 @@
 
     <TextView
         android:id="@+id/status"
-        android:text="Chưa chọn EPUB"
+        android:text="Chưa chọn EPUB / PDF"
         android:textSize="14sp"
         android:paddingTop="8dp"
         android:layout_width="match_parent"
@@ -24,14 +24,14 @@
 
     <Button
         android:id="@+id/openButton"
-        android:text="📚 Chọn EPUB"
+        android:text="📚 Chọn EPUB / PDF"
         android:layout_marginTop="16dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 
     <Button
         android:id="@+id/analyzeButton"
-        android:text="Phân tích EPUB"
+        android:text="Phân tích EPUB / PDF"
         android:enabled="false"
         android:layout_marginTop="8dp"
         android:layout_width="match_parent"
@@ -73,7 +73,7 @@
 
     <Button
         android:id="@+id/exportButton"
-        android:text="📤 Xuất EPUB / Draft hiện tại"
+        android:text="📤 Xuất EPUB / PDF / Draft hiện tại"
         android:enabled="false"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
