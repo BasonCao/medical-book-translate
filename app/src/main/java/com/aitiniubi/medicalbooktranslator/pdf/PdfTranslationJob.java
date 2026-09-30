@@ -181,15 +181,15 @@ public final class PdfTranslationJob {
                                             List<LayoutUnit> units,
                                             Map<Integer,String> translated,
                                             List<FontSlot> fonts)throws IOException{
-        // Capture large filled vector rectangles BEFORE rewriting the page.
-        // Many journal tables are built from vector fills rather than images.
-        List<FillRect> fills=collectFilledRects(page);
-
+        // Remove source text while preserving the original vector graphics.
+        // IMPORTANT: do not reconstruct table fills from PDColor.toRGB(). Some
+        // medical PDFs use CMYK/ICC colors; converting them to RGB and redrawing
+        // can turn light table cells into black rectangles.
         stripTextOperators(doc,page);
+
         float pageHeight=page.getMediaBox().getHeight();
         try(PDPageContentStream cs=new PDPageContentStream(doc,page,
                 PDPageContentStream.AppendMode.APPEND,true,true)){
-            redrawFilledRects(cs,fills,pageHeight);
             for(int n=0;n<units.size();n++){
                 String text=translated.get(n);
                 if(text==null||text.trim().isEmpty())continue;
@@ -737,10 +737,54 @@ public final class PdfTranslationJob {
     }
 
     /** Remove only BT...ET text sections; images and vector graphics remain untouched. */
+    /**
+     * Remove source text operators from the page AND from Form XObjects.
+     *
+     * Many publisher PDFs place a table, header, or even the whole page inside
+     * a Form XObject. Removing BT/ET only from the page stream therefore leaves
+     * the original English text visible underneath the Vietnamese translation.
+     * We recursively rewrite Form XObject streams while preserving every
+     * non-text operator (fills, strokes, clipping, images, etc.).
+     */
     private static void stripTextOperators(PDDocument doc,PDPage page)throws IOException{
-        PDFStreamParser parser=new PDFStreamParser(page);parser.parse();
-        List<Object> kept=new ArrayList<>();boolean inText=false;
-        for(Object token:parser.getTokens()){
+        Set<Object> visited=Collections.newSetFromMap(new IdentityHashMap<>());
+        rewritePageWithoutText(doc,page);
+        stripFormXObjects(page.getResources(),doc,visited);
+    }
+
+    private static void stripFormXObjects(PDResources resources,PDDocument doc,
+                                          Set<Object> visited)throws IOException{
+        if(resources==null)return;
+        for(COSName name:resources.getXObjectNames()){
+            try{
+                PDXObject xo=resources.getXObject(name);
+                if(xo instanceof com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject){
+                    com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject form=
+                            (com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject)xo;
+                    Object key=form.getCOSObject();
+                    if(!visited.add(key))continue;
+
+                    PDFStreamParser parser=new PDFStreamParser(form.getCOSObject());
+                    parser.parse();
+                    List<Object> kept=filterNonTextTokens(parser.getTokens());
+
+                    COSStream stream=form.getCOSObject();
+                    try(OutputStream os=stream.createOutputStream()){
+                        new ContentStreamWriter(os).writeTokens(kept);
+                    }
+                    stripFormXObjects(form.getResources(),doc,visited);
+                }
+            }catch(Exception ignored){
+                // A malformed/unsupported form must not abort the whole PDF.
+            }
+        }
+    }
+
+
+    private static List<Object> filterNonTextTokens(List<Object> tokens){
+        List<Object> kept=new ArrayList<>();
+        boolean inText=false;
+        for(Object token:tokens){
             if(token instanceof Operator){
                 String name=((Operator)token).getName();
                 if("BT".equals(name)){inText=true;continue;}
@@ -749,12 +793,20 @@ public final class PdfTranslationJob {
             }else if(inText)continue;
             kept.add(token);
         }
+        return kept;
+    }
+
+    private static void rewritePageWithoutText(PDDocument doc,PDPage page)throws IOException{
+        PDFStreamParser parser=new PDFStreamParser(page);
+        parser.parse();
+        List<Object> kept=filterNonTextTokens(parser.getTokens());
         PDStream replacement=new PDStream(doc);
         try(OutputStream os=replacement.createOutputStream()){
             new ContentStreamWriter(os).writeTokens(kept);
         }
         page.setContents(replacement);
     }
+
 
     private static List<FontSlot> loadFonts(PDDocument out)throws IOException{
         List<FontSlot> fonts=new ArrayList<>();
