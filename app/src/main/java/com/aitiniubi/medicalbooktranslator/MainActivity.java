@@ -400,6 +400,34 @@ public class MainActivity extends Activity {
         dlg.show();
     }
 
+    private String profileKey(int slot,String field){return "ai_profile_"+slot+"_"+field;}
+    private boolean hasProfile(int slot){return !prefsHolder.getString(profileKey(slot,"key"),"").trim().isEmpty();}
+    private String profileProvider(int slot){return prefsHolder.getString(profileKey(slot,"provider"),PROVIDERS[0]);}
+    private boolean isFreeProfile(String p,String m){return p.equals(PROVIDERS[0])||(p.equals(PROVIDERS[1])&&isFreeGeminiModel(m));}
+    private String maskedKey(String k){if(k==null||k.isEmpty())return "(trống)";return k.length()<=8?"••••••••":k.substring(0,4)+"••••"+k.substring(k.length()-4);}
+    private TranslationConfig profileConfig(int slot){
+        String p=profileProvider(slot);TranslationConfig c=new TranslationConfig();
+        if(p.equals(PROVIDERS[0]))c.endpoint=OPENROUTER_ENDPOINT;
+        else if(p.equals(PROVIDERS[1]))c.endpoint=GEMINI_ENDPOINT;
+        else if(p.equals(PROVIDERS[2]))c.endpoint=OPENAI_ENDPOINT;
+        else if(p.equals(PROVIDERS[3]))c.endpoint=DEEPSEEK_ENDPOINT;
+        else if(p.equals(PROVIDERS[4]))c.endpoint=MISTRAL_ENDPOINT;
+        else c.endpoint=prefsHolder.getString(profileKey(slot,"endpoint"),"");
+        c.model=prefsHolder.getString(profileKey(slot,"model"),"");
+        c.apiKey=prefsHolder.getString(profileKey(slot,"key"),"");return c;
+    }
+    private List<TranslationRouter.Provider> savedProfileProviders(){
+        List<TranslationRouter.Provider> out=new ArrayList<>();HashSet<String> seen=new HashSet<>();
+        boolean freeOnly=prefsHolder.getBoolean(PREF_FREE_POOL,true),allowPaid=prefsHolder.getBoolean(PREF_ALLOW_PAID,false);
+        for(int i=1;i<=10;i++)if(hasProfile(i)){
+            String p=profileProvider(i);TranslationConfig c=profileConfig(i);
+            if(c.endpoint==null||c.endpoint.isEmpty()||c.model==null||c.model.isEmpty()||c.apiKey==null||c.apiKey.isEmpty())continue;
+            if(freeOnly&&!isFreeProfile(p,c.model)&&!allowPaid)continue;
+            String id=p+"|"+c.model+"|"+c.apiKey;if(seen.add(id))out.add(new TranslationRouter.Provider("Cấu hình "+i+" — "+p,c));
+        }
+        return out;
+    }
+
     private void settings(){
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(40,10,40,10);
         Spinner profile=new Spinner(this);
