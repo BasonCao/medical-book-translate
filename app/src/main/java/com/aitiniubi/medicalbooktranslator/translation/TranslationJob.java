@@ -69,9 +69,10 @@ public final class TranslationJob {
                         completedBatches++;
                         Map<String,String> got=br.translations;
                         List<Unit> batch=br.batch;
+                        int batchNo=completedBatches;
                         for(Unit u:batch){
                             String t=got.get(u.id);
-                            if(blank(t))t=TranslationRouter.translate(u.inner,context+" Return only the translated HTML fragment.",providers);
+                            if(blank(t))t=TranslationRouter.translate(u.inner,br.context+" Return only the translated HTML fragment.",providers);
                             t=clean(t);
                             if(blank(t))throw new IOException("AI trả về bản dịch rỗng cho unit "+u.id);
                             store.put(new TranslationStateStore.Record(u.id,u.file,u.sourceHash,t));
@@ -154,7 +155,7 @@ public final class TranslationJob {
         String gt=GlossaryManager.promptTerms(combined.toString(),glossary);
         if(!gt.isEmpty())context.append("\n\n").append(gt);
         Map<String,String> got=translateBatch(batch,context.toString(),providers);
-        return new BatchResult(batch,got);
+        return new BatchResult(batch,got,context.toString());
     }
 
     private static Map<String,String> translateBatch(List<Unit> batch,String context,List<TranslationRouter.Provider> providers)throws Exception{
@@ -223,7 +224,7 @@ public final class TranslationJob {
     }
     private static final class Rep{final Unit u;final String t;Rep(Unit u,String t){this.u=u;this.t=t;}}
     private static final class BatchResult{
-        final List<Unit> batch;final Map<String,String> translations;
-        BatchResult(List<Unit> b,Map<String,String> t){batch=b;translations=t;}
+        final List<Unit> batch;final Map<String,String> translations;final String context;
+        BatchResult(List<Unit> b,Map<String,String> t,String c){batch=b;translations=t;context=c;}
     }
 }
