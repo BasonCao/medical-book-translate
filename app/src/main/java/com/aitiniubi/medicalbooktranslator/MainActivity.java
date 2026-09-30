@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
 
         open.setOnClickListener(v->pick());
         analyze.setOnClickListener(v->analyze());
-        settings.setOnClickListener(v->settings());
+        settings.setOnClickListener(v->{try{settings();}catch(Throwable t){showError(t);}});
         glossary.setOnClickListener(v->glossary());
         translate.setOnClickListener(v->translate());
         export.setOnClickListener(v->saveOutput());
@@ -311,8 +311,8 @@ public class MainActivity extends Activity {
     }
 
     private int indexOf(String[] a,String v){for(int i=0;i<a.length;i++)if(a[i].equals(v))return i;return -1;}
-    private String[] modelsFor(String p){if(p.equals(PROVIDERS[0]))return OR_MODELS;if(p.equals(PROVIDERS[1]))return geminiCatalog()[0];if(p.equals(PROVIDERS[2]))return OPENAI_MODELS;if(p.equals(PROVIDERS[3]))return DEEPSEEK_MODELS;if(p.equals(PROVIDERS[4]))return MISTRAL_MODELS;return new String[]{providerModel(PROVIDERS[5])};}
-    private String[] labelsFor(String p){if(p.equals(PROVIDERS[0]))return OR_LABELS;if(p.equals(PROVIDERS[1]))return geminiCatalog()[1];if(p.equals(PROVIDERS[2]))return OPENAI_LABELS;if(p.equals(PROVIDERS[3]))return DEEPSEEK_LABELS;if(p.equals(PROVIDERS[4]))return MISTRAL_LABELS;return new String[]{providerModel(PROVIDERS[5])};}
+    private String[] modelsFor(String p){if(p==null||p.trim().isEmpty())return OR_MODELS;if(p.equals(PROVIDERS[0]))return OR_MODELS;if(p.equals(PROVIDERS[1]))return geminiCatalog()[0];if(p.equals(PROVIDERS[2]))return OPENAI_MODELS;if(p.equals(PROVIDERS[3]))return DEEPSEEK_MODELS;if(p.equals(PROVIDERS[4]))return MISTRAL_MODELS;return new String[]{providerModel(PROVIDERS[5])};}
+    private String[] labelsFor(String p){if(p==null||p.trim().isEmpty())return OR_LABELS;if(p.equals(PROVIDERS[0]))return OR_LABELS;if(p.equals(PROVIDERS[1]))return geminiCatalog()[1];if(p.equals(PROVIDERS[2]))return OPENAI_LABELS;if(p.equals(PROVIDERS[3]))return DEEPSEEK_LABELS;if(p.equals(PROVIDERS[4]))return MISTRAL_LABELS;return new String[]{providerModel(PROVIDERS[5])};}
 
     private String[][] geminiCatalog(){
         String idsRaw=prefsHolder.getString("gemini_catalog_ids","");
@@ -552,7 +552,9 @@ public class MainActivity extends Activity {
             if(refreshing[0])return;
             refreshing[0]=true;
             try{
-            String p=(String)provider.getSelectedItem();
+            Object selectedProvider=provider.getSelectedItem();
+            if(selectedProvider==null)return;
+            String p=selectedProvider.toString();
             String[] ms=modelsFor(p),labels=labelsFor(p);
             int slot=active[0];
             String saved=prefsHolder.getString(profileKey(slot,"model"),"");
