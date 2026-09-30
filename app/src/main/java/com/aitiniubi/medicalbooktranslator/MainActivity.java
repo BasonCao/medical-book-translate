@@ -47,7 +47,7 @@ public class MainActivity extends Activity {
 
     private TextView status,report;
     private ProgressBar progress;
-    private Button analyze,translate,export,reset;
+    private Button analyze,translate,export,reset,pdfLayout;
     private File selectedFile,lastOutput,workspace;
     private EpubBook book;
     private PdfBook pdfBook;
