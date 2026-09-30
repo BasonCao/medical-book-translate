@@ -20,6 +20,7 @@ import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
 import com.tom_roush.pdfbox.pdmodel.PDResources;
 import com.tom_roush.pdfbox.pdmodel.graphics.PDXObject;
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import com.tom_roush.pdfbox.pdmodel.graphics.color.PDColor;
 import com.tom_roush.pdfbox.cos.COSName;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
 import com.tom_roush.pdfbox.util.Matrix;
@@ -180,10 +181,15 @@ public final class PdfTranslationJob {
                                             List<LayoutUnit> units,
                                             Map<Integer,String> translated,
                                             List<FontSlot> fonts)throws IOException{
+        // Capture large filled vector rectangles BEFORE rewriting the page.
+        // Many journal tables are built from vector fills rather than images.
+        List<FillRect> fills=collectFilledRects(page);
+
         stripTextOperators(doc,page);
         float pageHeight=page.getMediaBox().getHeight();
         try(PDPageContentStream cs=new PDPageContentStream(doc,page,
                 PDPageContentStream.AppendMode.APPEND,true,true)){
+            redrawFilledRects(cs,fills,pageHeight);
             for(int n=0;n<units.size();n++){
                 String text=translated.get(n);
                 if(text==null||text.trim().isEmpty())continue;
@@ -369,6 +375,75 @@ public final class PdfTranslationJob {
         ImageCollector collector=new ImageCollector(page);
         collector.processPage(page);
         return collector.images;
+    }
+
+    private static List<FillRect> collectFilledRects(PDPage page)throws IOException{
+        FillRectCollector collector=new FillRectCollector(page);
+        collector.processPage(page);
+        return collector.rects;
+    }
+
+    private static void redrawFilledRects(PDPageContentStream cs,List<FillRect> rects,
+                                          float pageHeight)throws IOException{
+        for(FillRect r:rects){
+            if(r.width<8f||r.height<4f||r.width*r.height<120f)continue;
+            try{
+                int rgb=r.color.toRGB();
+                float rr=((rgb>>16)&255)/255f;
+                float gg=((rgb>>8)&255)/255f;
+                float bb=(rgb&255)/255f;
+                if(rr>0.97f&&gg>0.97f&&bb>0.97f)continue;
+                cs.saveGraphicsState();
+                cs.setNonStrokingColor(rr,gg,bb);
+                cs.addRect(r.x,r.y,r.width,r.height);
+                cs.fill();
+                cs.restoreGraphicsState();
+            }catch(Exception ignored){}
+        }
+    }
+
+    private static final class FillRect{
+        final float x,y,width,height;
+        final PDColor color;
+        FillRect(float x,float y,float width,float height,PDColor color){
+            this.x=x;this.y=y;this.width=width;this.height=height;this.color=color;
+        }
+    }
+
+    private static final class FillRectCollector extends PDFGraphicsStreamEngine{
+        final List<FillRect> rects=new ArrayList<>();
+        private PointF a,b,c,d;
+        FillRectCollector(PDPage page){super(page);}
+
+        @Override public void appendRectangle(PointF p0,PointF p1,PointF p2,PointF p3){
+            a=p0;b=p1;c=p2;d=p3;
+        }
+
+        @Override public void fillPath(Path.FillType windingRule){
+            if(a==null||b==null||c==null||d==null)return;
+            float minX=Math.min(Math.min(a.x,b.x),Math.min(c.x,d.x));
+            float maxX=Math.max(Math.max(a.x,b.x),Math.max(c.x,d.x));
+            float minY=Math.min(Math.min(a.y,b.y),Math.min(c.y,d.y));
+            float maxY=Math.max(Math.max(a.y,b.y),Math.max(c.y,d.y));
+            if(maxX-minX>=8f&&maxY-minY>=4f){
+                PDColor color=getGraphicsState().getNonStrokingColor();
+                if(color!=null&&!color.isPattern())
+                    rects.add(new FillRect(minX,minY,maxX-minX,maxY-minY,color));
+            }
+            a=b=c=d=null;
+        }
+
+        @Override public void fillAndStrokePath(Path.FillType windingRule){fillPath(windingRule);}
+        @Override public void closePath(){}
+        @Override public void clip(Path.FillType windingRule){}
+        @Override public void curveTo(float x1,float y1,float x2,float y2,float x3,float y3){}
+        @Override public void endPath(){a=b=c=d=null;}
+        @Override public PointF getCurrentPoint(){return null;}
+        @Override public void lineTo(float x,float y){}
+        @Override public void moveTo(float x,float y){}
+        @Override public void shadingFill(COSName shadingName){}
+        @Override public void strokePath(){a=b=c=d=null;}
+        @Override public void drawImage(PDImage pdImage)throws IOException{}
     }
 
     private static final class FlowItem{
