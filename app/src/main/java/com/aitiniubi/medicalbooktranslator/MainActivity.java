@@ -109,15 +109,22 @@ public class MainActivity extends Activity {
     @Override protected void onActivityResult(int r,int c,Intent d){
         super.onActivityResult(r,c,d);
         if(r==12&&c==RESULT_OK&&d!=null){
-            try{
-                Uri u=d.getData();
-                InputStream in=getContentResolver().openInputStream(u);
-                if(in==null)throw new IOException("Không mở được file CSV.");
-                int n=GlossaryManager.importCsv(workspace,in);in.close();
-                List<GlossaryManager.Term> terms=GlossaryManager.load(workspace);
-                Toast.makeText(this,"Đã nạp "+n+" thuật ngữ. Tổng hiện tại: "+terms.size(),Toast.LENGTH_LONG).show();
-                report.setText("📚 Glossary: "+terms.size()+" thuật ngữ đang được áp dụng khi dịch batch.");
-            }catch(Exception e){showError(e);}
+            final Uri u=d.getData();
+            if(u==null||workspace==null){Toast.makeText(this,"Không có file CSV hoặc workspace.",Toast.LENGTH_SHORT).show();return;}
+            Toast.makeText(this,"⏳ Đang nạp CSV ở nền… Không cần chờ trên màn hình.",Toast.LENGTH_SHORT).show();
+            new Thread(()->{
+                try(InputStream in=getContentResolver().openInputStream(u)){
+                    if(in==null)throw new IOException("Không mở được file CSV.");
+                    final int n=GlossaryManager.importCsv(workspace,in);
+                    final int total=GlossaryManager.load(workspace).size();
+                    runOnUiThread(()->{
+                        Toast.makeText(this,"✅ Đã nạp thêm "+n+" thuật ngữ. Tổng: "+total,Toast.LENGTH_LONG).show();
+                        report.setText("📚 Glossary: "+total+" thuật ngữ đang được áp dụng khi dịch batch.");
+                    });
+                }catch(Exception e){
+                    runOnUiThread(()->showError(e));
+                }
+            },"Glossary-CSV-Import").start();
             return;
         }
         if(r==11&&c==RESULT_OK&&d!=null){
