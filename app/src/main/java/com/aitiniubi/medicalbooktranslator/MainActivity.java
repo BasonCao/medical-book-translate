@@ -771,22 +771,75 @@ public class MainActivity extends Activity {
     }
 
     private void choosePdfLayoutAndTranslate(List<TranslationRouter.Provider> providers){
-        String[] choices={
-                "📰 Giữ bố cục 2 cột như PDF gốc",
-                "📄 Chuyển sang bố cục 1 cột"
-        };
-        int saved=prefsHolder.getInt("pdf_layout_mode",0);
-        final int[] selected={Math.max(0,Math.min(saved,1))};
+        final int saved=prefsHolder.getInt("pdf_layout_mode",0);
+        final int initial=Math.max(0,Math.min(saved,1));
+
+        // Do not use setMessage() together with setSingleChoiceItems(): on some Android
+        // versions the message consumes the dialog content area and the radio choices
+        // are not rendered. Use an explicit RadioGroup so the two PDF layout choices
+        // are always visible and tappable.
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad=(int)(16*getResources().getDisplayMetrics().density);
+        root.setPadding(pad,0,pad,0);
+
+        TextView hint=new TextView(this);
+        hint.setText("Chọn cách dàn trang cho PDF sau khi dịch:");
+        hint.setTextSize(15);
+        hint.setPadding(0,pad/2,pad/4,pad/2);
+        root.addView(hint,new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        RadioGroup group=new RadioGroup(this);
+        group.setOrientation(RadioGroup.VERTICAL);
+
+        RadioButton keep=new RadioButton(this);
+        keep.setText("📰 Giữ nguyên bố cục PDF gốc (2 cột)");
+        keep.setTextSize(16);
+        keep.setPadding(0,pad/3,0,pad/3);
+
+        RadioButton one=new RadioButton(this);
+        one.setText("📄 Chuyển sang bố cục 1 cột");
+        one.setTextSize(16);
+        one.setPadding(0,pad/3,0,pad/3);
+
+        group.addView(keep,new RadioGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+        group.addView(one,new RadioGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+        group.check(initial==0?keep.getId():one.getId());
+
+        // RadioButton IDs are needed for RadioGroup.check().
+        if(keep.getId()==View.NO_ID)keep.setId(View.generateViewId());
+        if(one.getId()==View.NO_ID)one.setId(View.generateViewId());
+        group.removeAllViews();
+        group.addView(keep,new RadioGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+        group.addView(one,new RadioGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+        group.check(initial==0?keep.getId():one.getId());
+
+        TextView note=new TextView(this);
+        note.setText("Giữ nguyên: cố gắng giữ vị trí hình, bảng, màu nền và cấu trúc 2 cột gần PDF gốc.\\n"
+                +"1 cột: dồn phần văn bản thành một cột, phù hợp khi đọc trên điện thoại; vị trí hình/bảng có thể thay đổi.");
+        note.setTextSize(13);
+        note.setPadding(0,pad/2,0,0);
+        root.addView(note,new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        final int[] selected={initial};
+        group.setOnCheckedChangeListener((g,checkedId)->selected[0]=(checkedId==one.getId()?1:0));
+
         new AlertDialog.Builder(this)
                 .setTitle("Bố cục PDF đầu ra")
-                .setSingleChoiceItems(choices,selected[0],(d,which)->selected[0]=which)
-                .setMessage("2 cột: giữ hình, bảng và bố cục gần PDF gốc.\n1 cột: dễ đọc hơn nhưng có thể thay đổi vị trí hình/bảng.")
+                .setView(root)
                 .setPositiveButton("DỊCH / TIẾP TỤC",(d,w)->{
                     prefsHolder.edit().putInt("pdf_layout_mode",selected[0]).apply();
                     updatePdfLayoutButton();
                     translatePdf(providers,selected[0]==1);
                 })
-                .setNegativeButton("HỦY",null).show();
+                .setNegativeButton("HỦY",null)
+                .show();
     }
 
     private void translatePdf(List<TranslationRouter.Provider> providers,boolean singleColumn){
