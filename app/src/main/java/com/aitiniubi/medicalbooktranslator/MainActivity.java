@@ -396,7 +396,7 @@ public class MainActivity extends Activity {
             }
             try{GlossaryManager.save(workspace,edited);Toast.makeText(this,"Đã lưu "+edited.size()+" thuật ngữ.",Toast.LENGTH_LONG).show();report.setText("📚 Glossary: "+edited.size()+" thuật ngữ.");dlg.dismiss();}
             catch(Exception e){showError(e);}
-        });
+        }));
         dlg.show();
     }
 
