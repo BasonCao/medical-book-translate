@@ -461,6 +461,8 @@ public class MainActivity extends Activity {
         refreshGemini.setOnClickListener(v->refreshGeminiCatalog(model,note,refresh));
         provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){refresh.run();refreshGemini.setVisibility(pos==1?View.VISIBLE:View.GONE);}public void onNothingSelected(AdapterView<?> a){}});
         model.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){public void onItemSelected(AdapterView<?> a,View v,int pos,long id){}public void onNothingSelected(AdapterView<?> a){}});
+        // Re-fire the selected profile after all listeners are attached.
+        profile.setSelection(profile.getSelectedItemPosition());
 
         Button test=new Button(this);test.setText("KIỂM TRA PROVIDER NÀY");
         test.setOnClickListener(v->{
