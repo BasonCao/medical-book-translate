@@ -62,9 +62,9 @@ public final class PdfTranslationJob {
 
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
-                boolean layoutV3="3".equals(state.getProperty("pdf.layout.version",""));
+                boolean layoutV4="4".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
-                    String t=layoutV3?state.getProperty("page."+i,""):"";
+                    String t=layoutV4?state.getProperty("page."+i,""):"";
                     if(!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
@@ -113,7 +113,7 @@ public final class PdfTranslationJob {
                 }
 
                 try{
-                    state.setProperty("pdf.layout.version","3");
+                    state.setProperty("pdf.layout.version","4");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
                         translations.put(result.page,result.text);
@@ -154,8 +154,12 @@ public final class PdfTranslationJob {
         try(PDDocument doc=PDDocument.load(source)){
             List<FontSlot> fonts=loadFonts(doc);
             if(fonts.isEmpty())throw new IOException("Thiết bị không có font TTF Unicode để tạo PDF tiếng Việt.");
-            for(int i=0;i<doc.getNumberOfPages();i++){
-                PDPage page=doc.getPage(i);
+
+            List<PDPage> sourcePages=new ArrayList<>();
+            for(int i=0;i<doc.getNumberOfPages();i++)sourcePages.add(doc.getPage(i));
+
+            for(int i=0;i<sourcePages.size();i++){
+                PDPage page=sourcePages.get(i);
                 List<LayoutUnit> units=extractLayoutUnits(doc,i+1);
                 if(units.isEmpty())continue;
                 Map<Integer,String> translated=parseUnitMap(translations.get(i+1),units.size());
@@ -188,25 +192,32 @@ public final class PdfTranslationJob {
     }
 
 
-    private static void buildSingleColumnPage(PDDocument doc,PDPage page,
+    /**
+     * V1.9.7: convert detected two-column pages into a clean one-column flow.
+     * The flow is allowed to continue onto newly-created pages instead of
+     * shrinking the whole article into unreadably small text.
+     */
+    private static void buildSingleColumnPage(PDDocument doc,PDPage firstPage,
                                                List<LayoutUnit> units,
                                                Map<Integer,String> translated,
                                                List<FontSlot> fonts)throws IOException{
-        float pageW=page.getMediaBox().getWidth();
-        float pageH=page.getMediaBox().getHeight();
-        float margin=34f;
-        float maxW=Math.max(120f,pageW-margin*2f);
+        final float pageW=firstPage.getMediaBox().getWidth();
+        final float pageH=firstPage.getMediaBox().getHeight();
+        final float margin=36f;
+        final float maxW=Math.max(120f,pageW-margin*2f);
+        final float imageMaxW=Math.min(maxW,maxW*0.88f);
+        final float textSize=8.8f;
+        final float leading=textSize*1.22f;
 
-        List<ImagePlacement> placements=collectImagePlacements(page);
+        List<ImagePlacement> placements=collectImagePlacements(firstPage);
         if(placements.isEmpty()){
-            PDResources resources=page.getResources();
+            PDResources resources=firstPage.getResources();
             if(resources!=null){
                 for(COSName name:resources.getXObjectNames()){
                     try{
                         PDXObject xo=resources.getXObject(name);
                         if(xo instanceof PDImageXObject){
                             PDImageXObject image=(PDImageXObject)xo;
-                            float ratio=image.getHeight()>0?(float)image.getWidth()/image.getHeight():1f;
                             placements.add(new ImagePlacement(image,0,0,image.getWidth(),
                                     image.getHeight(),pageH));
                         }
@@ -215,10 +226,9 @@ public final class PdfTranslationJob {
             }
         }
 
-        // Rebuild detected two-column pages as one continuous reading column.
-        // The old text layer is removed so the longer Vietnamese translation
-        // can reflow naturally without colliding with the original columns.
-        page.setContents(new PDStream(doc));
+        // Remove the original two-column content. We redraw text/images in a
+        // deliberate reading order below.
+        firstPage.setContents(new PDStream(doc));
 
         List<FlowItem> header=new ArrayList<>();
         List<FlowItem> left=new ArrayList<>();
@@ -228,6 +238,8 @@ public final class PdfTranslationJob {
             String text=translated.get(i);
             if(text==null||text.trim().isEmpty())continue;
             LayoutUnit u=units.get(i);
+            if(isJournalFooter(u.source,u.y,pageH))continue;
+
             FlowItem item=FlowItem.text(text,u.y);
             if(u.column<0)header.add(item);
             else if(u.column==0)left.add(item);
@@ -235,14 +247,15 @@ public final class PdfTranslationJob {
         }
 
         for(ImagePlacement p:placements){
-            float cx=p.x+p.width/2f;
+            // Wide figures are page-level items; otherwise use the original
+            // left/right column. This fixes V1.9.6's center-point misclassification.
             FlowItem item=FlowItem.image(p,p.top);
-            if(cx<pageW*0.25f)left.add(item);
-            else if(cx>pageW*0.75f)right.add(item);
-            else header.add(item);
+            if(p.width>=pageW*0.50f)header.add(item);
+            else if(p.x+p.width/2f<pageW/2f)left.add(item);
+            else right.add(item);
         }
 
-        Comparator<FlowItem> byY=(a,b)->Float.compare(a.top,b.top);
+        Comparator<FlowItem> byY=(x,y)->Float.compare(x.top,y.top);
         Collections.sort(header,byY);
         Collections.sort(left,byY);
         Collections.sort(right,byY);
@@ -252,43 +265,78 @@ public final class PdfTranslationJob {
         flow.addAll(left);
         flow.addAll(right);
 
-        float imageMaxW=Math.min(maxW,maxW*0.82f);
-        float size=9.4f;
-        while(size>6.2f && estimateFlowHeight(flow,fonts,size,maxW,imageMaxW)>pageH-margin*2f)
-            size-=0.35f;
-
-        try(PDPageContentStream cs=new PDPageContentStream(doc,page)){
-            float top=pageH-margin;
+        PDPage current=firstPage;
+        float top=pageH-margin;
+        PDPageContentStream cs=new PDPageContentStream(doc,current);
+        try{
             for(FlowItem item:flow){
                 if(item.image!=null){
                     float ratio=item.image.height>0?item.image.width/item.image.height:1f;
                     float w=Math.min(imageMaxW,item.image.width);
                     float h=w/Math.max(0.1f,ratio);
+                    float needed=h+12f;
+
+                    if(top-needed<margin && top<pageH-margin-2f){
+                        cs.close();
+                        PDPage previous=current;
+                        current=new PDPage(firstPage.getMediaBox());
+                        doc.getPages().insertAfter(current,previous);
+                        cs=new PDPageContentStream(doc,current);
+                        top=pageH-margin;
+                    }
+
+                    // If a single figure is taller than the printable area,
+                    // scale it down only as much as necessary.
+                    if(h>pageH-margin*2f){
+                        h=pageH-margin*2f;
+                        w=h*Math.max(0.1f,ratio);
+                        if(w>maxW){w=maxW;h=w/Math.max(0.1f,ratio);}
+                    }
+
                     top-=h;
-                    if(top<margin)break;
-                    float x=(pageW-w)/2f;
-                    cs.drawImage(item.image.image,x,top,w,h);
-                    top-=10f;
+                    cs.drawImage(item.image.image,(pageW-w)/2f,top,w,h);
+                    top-=12f;
                     continue;
                 }
 
                 String clean=sanitizeForPdf(item.text).trim();
                 if(clean.isEmpty())continue;
-                List<String> lines=wrapText(clean,fonts,size,maxW);
-                float leading=size*1.22f;
-                if(top-size<margin)break;
+                List<String> lines=wrapText(clean,fonts,textSize,maxW);
+                float needed=lines.size()*leading+4f;
+
+                if(top-needed<margin && top<pageH-margin-2f){
+                    cs.close();
+                    PDPage previous=current;
+                    current=new PDPage(firstPage.getMediaBox());
+                    doc.getPages().insertAfter(current,previous);
+                    cs=new PDPageContentStream(doc,current);
+                    top=pageH-margin;
+                }
+
                 cs.beginText();
-                cs.setFont(fonts.get(0).font,size);
+                cs.setFont(fonts.get(0).font,textSize);
                 for(String line:lines){
-                    if(top-size<margin)break;
-                    cs.setTextMatrix(Matrix.getTranslateInstance(margin,top-size));
-                    showTextWithFallback(cs,line,fonts,size);
+                    cs.setTextMatrix(Matrix.getTranslateInstance(margin,top-textSize));
+                    showTextWithFallback(cs,line,fonts,textSize);
                     top-=leading;
                 }
                 cs.endText();
                 top-=4f;
             }
+        }finally{
+            try{cs.close();}catch(Exception ignored){}
         }
+    }
+
+    private static boolean isJournalFooter(String text,float y,float pageH){
+        if(text==null)return false;
+        String s=text.trim().toLowerCase(Locale.US);
+        if(y>pageH-35f)return true;
+        return s.contains("j obstet gynaecol can")
+                ||s.contains("https://doi.org/")
+                ||s.contains("© 2018")
+                ||s.contains("published by elsevier")
+                ||s.contains("all rights reserved");
     }
 
     private static float estimateFlowHeight(List<FlowItem> flow,List<FontSlot> fonts,
@@ -492,7 +540,12 @@ public final class PdfTranslationJob {
 
         private int columnOf(LayoutLine l,float pageWidth){
             float right=l.x+l.width;
-            if(l.x<pageWidth*0.18f && right>pageWidth*0.52f)return -1;
+            // Top-of-page journal material (running header, title, authors,
+            // affiliations and figure captions above a top figure) stays before
+            // the two-column body. The target journal pages begin their body
+            // below roughly 330pt.
+            if(l.y<330f)return -1;
+            if(l.x<pageWidth*0.12f && right>pageWidth*0.58f)return -1;
             return l.x+l.width/2f<pageWidth/2f?0:1;
         }
 
@@ -550,7 +603,9 @@ public final class PdfTranslationJob {
                 String u=p.getUnicode();if(u==null)continue;
                 if(prev!=null){
                     float gap=p.getX()-(prev.getX()+prev.getWidth());
-                    if(gap>Math.max(1.5f,p.getWidthOfSpace()*0.55f)&&s.length()>0)s.append(' ');
+                    float spaceThreshold=Math.max(0.85f,
+                            Math.min(3.2f,Math.max(p.getFontSizeInPt(),prev.getFontSizeInPt())*0.16f));
+                    if(gap>spaceThreshold&&s.length()>0)s.append(' ');
                 }
                 s.append(u);minX=Math.min(minX,p.getX());minY=Math.min(minY,p.getY());
                 maxX=Math.max(maxX,p.getX()+p.getWidth());maxY=Math.max(maxY,p.getY()+p.getHeight());
