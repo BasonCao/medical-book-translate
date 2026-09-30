@@ -6,6 +6,10 @@ import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
 import com.tom_roush.pdfbox.pdmodel.PDPage;
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream;
+import com.tom_roush.pdfbox.pdmodel.PDStream;
+import com.tom_roush.pdfbox.pdfparser.PDFStreamParser;
+import com.tom_roush.pdfbox.pdfwriter.ContentStreamWriter;
+import com.tom_roush.pdfbox.text.TextPosition;
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle;
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
@@ -122,38 +126,130 @@ public final class PdfTranslationJob {
         },"pdf-translation").start();
     }
 
-    private static void buildReflowPdf(Context context,File source,File output,Map<Integer,String> translations)throws Exception{
+    /** Preserve the original page graphics/images and replace only the text. */
+    private static void buildReflowPdf(Context context,File source,File output,
+                                       Map<Integer,String> translations)throws Exception{
         PDFBoxResourceLoader.init(context.getApplicationContext());
-        try(PDDocument src=PDDocument.load(source);PDDocument out=new PDDocument()){
-            List<FontSlot> fonts=loadFonts(out);
-            if(fonts.isEmpty()){
-                throw new IOException("Thiết bị không có font TTF Unicode để tạo PDF tiếng Việt.");
-            }
-
-            // The primary font is used for normal Vietnamese text; symbol/math fonts
-            // are selected per code point so one unsupported glyph cannot abort export.
-            for(int i=0;i<src.getNumberOfPages();i++){
-                PDRectangle box=src.getPage(i).getMediaBox();
-                PDPage page=new PDPage(new PDRectangle(box.getWidth(),box.getHeight()));
-                out.addPage(page);
-                String text=sanitizeForPdf(translations.get(i+1));
-                try(PDPageContentStream cs=new PDPageContentStream(out,page)){
+        try(PDDocument doc=PDDocument.load(source)){
+            List<FontSlot> fonts=loadFonts(doc);
+            if(fonts.isEmpty())throw new IOException("Thiết bị không có font TTF Unicode để tạo PDF tiếng Việt.");
+            for(int i=0;i<doc.getNumberOfPages();i++){
+                PDPage page=doc.getPage(i);
+                float pageHeight=page.getMediaBox().getHeight();
+                List<LayoutLine> originalLines=extractLayoutLines(doc,page,i+1);
+                String translated=sanitizeForPdf(translations.get(i+1));
+                List<String> translatedLines=fitTranslationToLayout(translated,originalLines,fonts,10f);
+                stripTextOperators(doc,page);
+                try(PDPageContentStream cs=new PDPageContentStream(doc,page,
+                        PDPageContentStream.AppendMode.APPEND,true,true)){
                     cs.beginText();
-                    cs.setLeading(14);
-                    cs.newLineAtOffset(42,box.getHeight()-48);
-                    float max=box.getWidth()-84;
-                    for(String para:text.replace("\\r","").split("\\n",-1)){
-                        for(String line:wrap(para,fonts,10,max)){
-                            showTextWithFallback(cs,line,fonts,10);
-                            cs.newLine();
-                        }
-                        cs.newLine();
+                    for(int n=0;n<originalLines.size();n++){
+                        LayoutLine srcLine=originalLines.get(n);
+                        String line=n<translatedLines.size()?translatedLines.get(n):"";
+                        if(line==null||line.trim().isEmpty())continue;
+                        float size=Math.max(5.5f,Math.min(12f,srcLine.fontSize));
+                        float width=Math.max(8f,srcLine.width);
+                        float measured=measureWidth(line,fonts,size);
+                        if(measured>width)size=Math.max(5.5f,size*width/measured);
+                        float x=Math.max(0f,srcLine.x);
+                        float y=pageHeight-srcLine.y-srcLine.height*0.82f;
+                        if(y<2f)y=2f;
+                        cs.setFont(fonts.get(0).font,size);
+                        cs.newLineAtOffset(x,y);
+                        showTextWithFallback(cs,line,fonts,size);
+                        cs.newLineAtOffset(-x,-y);
                     }
                     cs.endText();
                 }
             }
-            out.save(output);
+            doc.save(output);
         }
+    }
+
+    private static List<LayoutLine> extractLayoutLines(PDDocument doc,PDPage page,int pageNumber)
+            throws IOException{
+        LayoutStripper stripper=new LayoutStripper();
+        stripper.setSortByPosition(true);
+        stripper.setStartPage(pageNumber);stripper.setEndPage(pageNumber);
+        stripper.getText(doc);
+        return stripper.lines;
+    }
+
+    private static final class LayoutStripper extends PDFTextStripper{
+        final List<LayoutLine> lines=new ArrayList<>();
+        LayoutStripper()throws IOException{super();}
+        @Override protected void writeString(String text,List<TextPosition> positions)
+                throws IOException{
+            if(text==null||text.trim().isEmpty()||positions==null||positions.isEmpty())return;
+            float minX=Float.MAX_VALUE,minY=Float.MAX_VALUE,maxX=0f,maxY=0f,size=0f;
+            for(TextPosition p:positions){
+                minX=Math.min(minX,p.getXDirAdj());
+                minY=Math.min(minY,p.getYDirAdj());
+                maxX=Math.max(maxX,p.getXDirAdj()+p.getWidthDirAdj());
+                maxY=Math.max(maxY,p.getYDirAdj()+p.getHeightDir());
+                size=Math.max(size,p.getFontSizeInPt());
+            }
+            if(maxX>minX&&maxY>minY)
+                lines.add(new LayoutLine(text.replace("\\r",""),minX,minY,maxX-minX,maxY-minY,size));
+        }
+    }
+
+    private static final class LayoutLine{
+        final String source;final float x,y,width,height,fontSize;
+        LayoutLine(String s,float x,float y,float w,float h,float fs){
+            source=s;this.x=x;this.y=y;this.width=w;this.height=h;this.fontSize=fs>0?fs:10f;
+        }
+    }
+
+    /** Reflow the translated text into the original visual line boxes. */
+    private static List<String> fitTranslationToLayout(String translated,List<LayoutLine> boxes,
+                                                        List<FontSlot> fonts,float size)throws IOException{
+        List<String> out=new ArrayList<>();
+        if(boxes.isEmpty())return out;
+        String[] raw=(translated==null?"":translated.replace("\\r","")).split("\\n",-1);
+        if(raw.length==boxes.size()){
+            for(String s:raw)out.add(s.trim());
+            return out;
+        }
+        List<String> words=new ArrayList<>();
+        for(String s:raw)for(String w:s.trim().split("\\s+"))if(!w.isEmpty())words.add(w);
+        int wi=0;
+        for(LayoutLine box:boxes){
+            if(wi>=words.size()){out.add("");continue;}
+            StringBuilder line=new StringBuilder();
+            while(wi<words.size()){
+                String candidate=line.length()==0?words.get(wi):line+" "+words.get(wi);
+                if(line.length()>0&&measureWidth(candidate,fonts,size)>Math.max(8f,box.width))break;
+                line.append(line.length()==0?"":" ").append(words.get(wi++));
+            }
+            out.add(line.toString());
+        }
+        if(wi<words.size()&&!out.isEmpty()){
+            StringBuilder last=new StringBuilder(out.get(out.size()-1));
+            while(wi<words.size()){if(last.length()>0)last.append(' ');last.append(words.get(wi++));}
+            out.set(out.size()-1,last.toString());
+        }
+        return out;
+    }
+
+    /** Remove BT...ET text sections while keeping images/vector graphics intact. */
+    private static void stripTextOperators(PDDocument doc,PDPage page)throws IOException{
+        PDFStreamParser parser=new PDFStreamParser(page);parser.parse();
+        List<Object> kept=new ArrayList<>();boolean inText=false;
+        for(Object token:parser.getTokens()){
+            if(token instanceof Operator){
+                String name=((Operator)token).getName();
+                if("BT".equals(name)){inText=true;continue;}
+                if("ET".equals(name)){inText=false;continue;}
+                if(inText)continue;
+            }else if(inText)continue;
+            kept.add(token);
+        }
+        PDStream replacement=new PDStream(doc);
+        try(OutputStream os=replacement.createOutputStream()){
+            new ContentStreamWriter(os).writeTokens(kept);
+        }
+        page.setContents(replacement);
     }
 
     private static List<FontSlot> loadFonts(PDDocument out)throws IOException{
