@@ -53,51 +53,58 @@ public final class PdfTranslationJob {
 
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
+                boolean layoutV3="3".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
-                    String t=state.getProperty("page."+i,"");
+                    String t=layoutV3?state.getProperty("page."+i,""):"";
                     if(!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
 
-                // Extract remaining pages on one PDFBox thread, then run the
-                // expensive AI requests concurrently. PDFBox itself is not shared
-                // across worker threads.
-                Map<Integer,String> sourcePages=new HashMap<>();
+                // Extract visual layout units first. Each unit is translated as a
+                // self-contained block, so the renderer can put the Vietnamese text
+                // back into the exact original block instead of guessing line order.
+                Map<Integer,List<LayoutUnit>> pageUnits=new HashMap<>();
                 try(PDDocument doc=PDDocument.load(source)){
-                    PDFTextStripper stripper=new PDFTextStripper();
                     for(int page=1;page<=total;page++){
-                        if(translations.containsKey(page))continue;
-                        stripper.setStartPage(page);stripper.setEndPage(page);
-                        String sourceText=stripper.getText(doc);
-                        if(sourceText==null||sourceText.trim().isEmpty()){
-                            throw new IOException("Trang "+page+" không có text layer. PDF scan/OCR không được hỗ trợ.");
-                        }
-                        sourcePages.put(page,sourceText);
+                        pageUnits.put(page,extractLayoutUnits(doc,page));
                     }
                 }
 
-                // V1.7 was strictly sequential (one AI request at a time).
-                // V1.8 keeps a bounded pool of three requests to improve throughput
-                // without opening an excessive number of connections on Android.
+                // V1.9.2 stored one translated string per page. That is not enough
+                // for multi-column PDFs because PDF text drawing order can differ
+                // from visual reading order. V1.9.3 uses stable UNIT markers.
                 final int parallelism=3;
                 java.util.concurrent.ExecutorService pool=
                         java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<PageResult> completion=
                         new java.util.concurrent.ExecutorCompletionService<>(pool);
                 int submitted=0;
-                for(Map.Entry<Integer,String> entry:sourcePages.entrySet()){
-                    final int page=entry.getKey();
-                    final String sourceText=entry.getValue();
+                for(int page=1;page<=total;page++){
+                    final int pageNo=page;
+                    final List<LayoutUnit> units=pageUnits.get(page);
+                    if(units==null||units.isEmpty())continue;
                     completion.submit(()->{
-                        String prompt="Translate this medical textbook page from English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations, formulas, gene/drug names and paragraph breaks. Return plain text only.\n\n"+sourceText;
-                        String translated=TranslationRouter.translate(prompt,"Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers);
-                        if(translated==null||translated.trim().isEmpty())throw new IOException("AI trả về bản dịch rỗng ở trang "+page);
-                        return new PageResult(page,translated.trim());
+                        StringBuilder prompt=new StringBuilder();
+                        prompt.append("Translate the following medical textbook page from English to professional Vietnamese.\\n")
+                              .append("IMPORTANT: Keep every UNIT marker exactly unchanged. Do not merge, split, reorder, omit, summarize, or invent units.\\n")
+                              .append("Translate the text INSIDE each unit only. Preserve medical terminology, abbreviations, numbers, units, citations, URLs, formulas, gene/drug names.\\n")
+                              .append("Return plain text only, using the same UNIT markers.\\n\\n");
+                        for(int i=0;i<units.size();i++){
+                            prompt.append("[[[UNIT_").append(i).append("]]]\\n")
+                                  .append(units.get(i).source).append("\\n");
+                        }
+                        String translated=TranslationRouter.translate(prompt.toString(),
+                                "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers);
+                        if(translated==null||translated.trim().isEmpty())
+                            throw new IOException("AI trả về bản dịch rỗng ở trang "+pageNo);
+                        String normalized=parseUnitResponse(translated,units.size(),pageNo);
+                        return new PageResult(pageNo,normalized);
                     });
                     submitted++;
                 }
 
                 try{
+                    state.setProperty("pdf.layout.version","3");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
                         translations.put(result.page,result.text);
@@ -107,7 +114,7 @@ public final class PdfTranslationJob {
                         }
                         done++;
                         listener.onProgress(done,total,result.page,
-                                "Đã dịch PDF "+done+"/"+total+" trang | tối đa "+parallelism+" trang song song");
+                                "Đã dịch PDF "+done+"/"+total+" trang | bố cục block + "+parallelism+" trang song song");
                     }
                 }catch(java.util.concurrent.ExecutionException e){
                     Throwable cause=e.getCause();
@@ -128,13 +135,9 @@ public final class PdfTranslationJob {
     }
 
     /**
-     * Layout-preserving PDF renderer.
-     *
-     * Important: do NOT create a new blank PDF page. We keep the original page
-     * object, including all image XObjects/vector graphics, remove only its
-     * text operators, then place the Vietnamese text into the original text
-     * line boxes. This fixes the previous "word scattered across the page"
-     * problem caused by treating PDFTextStripper writeString() chunks as lines.
+     * Layout-preserving PDF renderer. The original page remains intact, including
+     * every image/vector object. Only original text operators are removed; each
+     * translated UNIT is then drawn inside its original visual bounding box.
      */
     private static void buildReflowPdf(Context context,File source,File output,
                                        Map<Integer,String> translations)throws Exception{
@@ -142,252 +145,250 @@ public final class PdfTranslationJob {
         try(PDDocument doc=PDDocument.load(source)){
             List<FontSlot> fonts=loadFonts(doc);
             if(fonts.isEmpty())throw new IOException("Thiết bị không có font TTF Unicode để tạo PDF tiếng Việt.");
-
             for(int i=0;i<doc.getNumberOfPages();i++){
                 PDPage page=doc.getPage(i);
-                float pageHeight=page.getMediaBox().getHeight();
-                List<LayoutLine> sourceLines=extractLayoutLines(doc,i+1);
-                String translated=sanitizeForPdf(translations.get(i+1));
-
-                if(sourceLines.isEmpty())continue;
-
-                // Remove only the original PDF text. Images, figures, rules and
-                // vector drawings stay in the page content.
+                List<LayoutUnit> units=extractLayoutUnits(doc,i+1);
+                if(units.isEmpty())continue;
+                Map<Integer,String> translated=parseUnitMap(translations.get(i+1),units.size());
                 stripTextOperators(doc,page);
-
-                List<String> lines=flowTranslation(translated,sourceLines,fonts);
+                float pageHeight=page.getMediaBox().getHeight();
                 try(PDPageContentStream cs=new PDPageContentStream(doc,page,
                         PDPageContentStream.AppendMode.APPEND,true,true)){
-                    cs.beginText();
-                    for(int n=0;n<sourceLines.size()&&n<lines.size();n++){
-                        String line=lines.get(n);
-                        if(line==null||line.trim().isEmpty())continue;
-                        LayoutLine box=sourceLines.get(n);
-                        float size=fitFontSize(line,fonts,box.fontSize,box.width);
-                        float x=box.x;
-                        // TextPosition YDirAdj is measured from the top of the page.
-                        // PDF drawing coordinates are measured from the bottom.
-                        float y=pageHeight-box.y-box.height*0.86f;
-                        if(y<1f)y=1f;
-                        cs.setFont(fonts.get(0).font,size);
-                        cs.newLineAtOffset(x,y);
-                        showTextWithFallback(cs,line,fonts,size);
-                        cs.newLineAtOffset(-x,-y);
+                    for(int n=0;n<units.size();n++){
+                        String text=translated.get(n);
+                        if(text==null||text.trim().isEmpty())continue;
+                        drawUnit(cs,text,units.get(n),fonts,pageHeight);
                     }
-                    cs.endText();
                 }
             }
             doc.save(output);
         }
     }
 
-    /**
-     * Collect real visual lines from individual glyph positions. PDF files often
-     * encode every word (or even every glyph) as a separate text-show operation;
-     * PDFTextStripper.writeString() therefore is NOT a reliable visual line.
-     */
-    private static List<LayoutLine> extractLayoutLines(PDDocument doc,int pageNumber)
+    private static void drawUnit(PDPageContentStream cs,String text,LayoutUnit unit,
+                                 List<FontSlot> fonts,float pageHeight)throws IOException{
+        String clean=sanitizeForPdf(text).trim();
+        if(clean.isEmpty())return;
+        float maxWidth=Math.max(10f,unit.width);
+        float maxHeight=Math.max(10f,unit.height);
+        float size=Math.max(5.5f,Math.min(18f,unit.fontSize));
+        List<String> lines;
+        while(true){
+            lines=wrapText(clean,fonts,size,maxWidth);
+            float leading=size*1.16f;
+            if(lines.size()*leading<=maxHeight || size<=5.5f)break;
+            size=Math.max(5.5f,size-0.45f);
+        }
+        float leading=size*1.16f;
+        float yTop=unit.y;
+        try{
+            cs.beginText();
+            cs.setFont(fonts.get(0).font,size);
+            for(int i=0;i<lines.size();i++){
+                String line=lines.get(i);
+                float y=pageHeight-(yTop+i*leading)-size*0.84f;
+                if(y<1f)y=1f;
+                cs.newLineAtOffset(unit.x,y);
+                showTextWithFallback(cs,line,fonts,size);
+                cs.newLineAtOffset(-unit.x,-y);
+            }
+            cs.endText();
+        }catch(Exception e){
+            try{cs.endText();}catch(Exception ignored){}
+            throw e;
+        }
+    }
+
+    private static List<String> wrapText(String text,List<FontSlot> fonts,float size,float maxWidth)
+            throws IOException{
+        List<String> out=new ArrayList<>();
+        for(String paragraph:text.replace("\\r","").split("\\n+")){
+            String p=paragraph.trim();
+            if(p.isEmpty()){out.add("");continue;}
+            StringBuilder line=new StringBuilder();
+            for(String word:p.split("\\s+")){
+                String candidate=line.length()==0?word:line+" "+word;
+                if(line.length()>0&&measureWidth(candidate,fonts,size)>maxWidth){
+                    out.add(line.toString());line=new StringBuilder(word);
+                }else line=new StringBuilder(candidate);
+            }
+            if(line.length()>0)out.add(line.toString());
+        }
+        return out;
+    }
+
+    private static List<LayoutUnit> extractLayoutUnits(PDDocument doc,int pageNumber)
             throws IOException{
         LayoutStripper stripper=new LayoutStripper();
         stripper.setSortByPosition(true);
-        stripper.setStartPage(pageNumber);
-        stripper.setEndPage(pageNumber);
+        stripper.setStartPage(pageNumber);stripper.setEndPage(pageNumber);
         stripper.getText(doc);
-        return stripper.buildLines();
+        return stripper.buildUnits(doc.getPage(pageNumber-1).getMediaBox().getWidth());
     }
 
     private static final class LayoutStripper extends PDFTextStripper{
         final List<TextPosition> glyphs=new ArrayList<>();
         LayoutStripper()throws IOException{super();}
-
         @Override protected void processTextPosition(TextPosition text){
             String u=text.getUnicode();
             if(u!=null&&!u.isEmpty())glyphs.add(text);
             super.processTextPosition(text);
         }
 
+        List<LayoutUnit> buildUnits(float pageWidth){
+            List<LayoutLine> lines=buildLines();
+            if(lines.isEmpty())return new ArrayList<>();
+            Map<Integer,List<LayoutLine>> columns=new HashMap<>();
+            for(LayoutLine line:lines){
+                float right=line.x+line.width;
+                int col;
+                if(line.x<pageWidth*0.18f && right>pageWidth*0.52f) col=-1; // full width
+                else col=(line.x+line.width/2f<pageWidth/2f)?0:1;
+                columns.computeIfAbsent(col,k->new ArrayList<>()).add(line);
+            }
+            for(List<LayoutLine> list:columns.values())
+                Collections.sort(list,(a,b)->Float.compare(a.y,b.y));
+
+            List<LayoutUnit> ordered=new ArrayList<>();
+            // Header/full-width material comes first.
+            addUnits(ordered,columns.get(-1));
+            // Then left column, then right column. This matches normal medical
+            // journal reading order for the target two-column layouts.
+            addUnits(ordered,columns.get(0));
+            addUnits(ordered,columns.get(1));
+            Collections.sort(ordered,(a,b)->{
+                // Preserve column order, but keep header units at the top.
+                int c=Integer.compare(a.column,b.column);
+                if(c!=0)return c;
+                return Float.compare(a.y,b.y);
+            });
+            return ordered;
+        }
+
+        private void addUnits(List<LayoutUnit> out,List<LayoutLine> lines){
+            if(lines==null||lines.isEmpty())return;
+            LayoutUnit current=null;
+            for(LayoutLine line:lines){
+                if(current==null || line.y-current.bottom>Math.max(14f,line.height*1.7f)){
+                    if(current!=null)out.add(current);
+                    current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
+                            columnOf(line));
+                }else{
+                    current.source += " " + line.source;
+                    float right=Math.max(current.x+current.width,line.x+line.width);
+                    current.width=right-current.x;
+                    current.height=Math.max(current.height,line.y+line.height-current.y);
+                    current.fontSize=Math.min(current.fontSize,line.fontSize>0?line.fontSize:current.fontSize);
+                }
+            }
+            if(current!=null)out.add(current);
+        }
+
+        private int columnOf(LayoutLine l){
+            return l.x+l.width/2f<300f?0:1;
+        }
+
         List<LayoutLine> buildLines(){
-            if(glyphs.isEmpty())return new ArrayList<>();
+            List<LayoutLine> out=new ArrayList<>();
             List<TextPosition> sorted=new ArrayList<>(glyphs);
             Collections.sort(sorted,(a,b)->{
-                int y=Float.compare(a.getYDirAdj(),b.getYDirAdj());
+                int y=Float.compare(a.getY(),b.getY());
                 if(y!=0)return y;
-                return Float.compare(a.getXDirAdj(),b.getXDirAdj());
+                return Float.compare(a.getX(),b.getX());
             });
-
             List<List<TextPosition>> rows=new ArrayList<>();
             for(TextPosition p:sorted){
-                float tol=Math.max(2.0f,p.getFontSizeInPt()*0.28f);
+                float tol=Math.max(2f,p.getFontSizeInPt()*0.28f);
                 List<TextPosition> row=null;
-                // Search recent rows only; text is already sorted by Y.
                 for(int i=rows.size()-1;i>=0;i--){
                     List<TextPosition> r=rows.get(i);
-                    float ry=r.get(0).getYDirAdj();
-                    if(p.getYDirAdj()-ry>tol+2f)break;
-                    if(Math.abs(p.getYDirAdj()-ry)<=tol){row=r;break;}
+                    float ry=r.get(0).getY();
+                    if(p.getY()-ry>tol+2f)break;
+                    if(Math.abs(p.getY()-ry)<=tol){row=r;break;}
                 }
-                if(row==null){row=new ArrayList<>();rows.add(row);}
-                row.add(p);
+                if(row==null){row=new ArrayList<>();rows.add(row);} row.add(p);
             }
-
-            List<LayoutLine> out=new ArrayList<>();
             for(List<TextPosition> row:rows){
-                Collections.sort(row,Comparator.comparing(TextPosition::getXDirAdj));
-                // A row can contain two columns at the same Y. Split it when
-                // the text starts jump by a large horizontal distance and the
-                // page is already in its multi-column body region.
-                List<List<TextPosition>> pieces=splitColumns(row);
-                for(List<TextPosition> piece:pieces){
-                    if(piece.isEmpty())continue;
-                    StringBuilder text=new StringBuilder();
-                    float minX=Float.MAX_VALUE,minY=Float.MAX_VALUE,maxX=0f,maxY=0f,size=0f;
-                    TextPosition prev=null;
-                    for(TextPosition p:piece){
-                        String u=p.getUnicode();
-                        if(u==null)continue;
-                        if(prev!=null){
-                            float gap=p.getXDirAdj()-(prev.getXDirAdj()+prev.getWidthDirAdj());
-                            float fs=Math.max(1f,p.getFontSizeInPt());
-                            // Infer a normal word space from a visible gap.
-                            if(gap>fs*0.22f&&!endsWithSpace(text))text.append(' ');
+                Collections.sort(row,Comparator.comparing(TextPosition::getX));
+                List<TextPosition> piece=new ArrayList<>();
+                TextPosition prev=null;
+                for(TextPosition p:row){
+                    if(prev!=null){
+                        float gap=p.getX()-(prev.getX()+prev.getWidth());
+                        float threshold=Math.max(42f,prev.getFontSizeInPt()*3.5f);
+                        if(gap>threshold&&!piece.isEmpty()){
+                            addLine(out,piece);piece=new ArrayList<>();
                         }
-                        text.append(u);
-                        minX=Math.min(minX,p.getXDirAdj());
-                        minY=Math.min(minY,p.getYDirAdj());
-                        maxX=Math.max(maxX,p.getXDirAdj()+p.getWidthDirAdj());
-                        maxY=Math.max(maxY,p.getYDirAdj()+p.getHeightDir());
-                        size=Math.max(size,p.getFontSizeInPt());
-                        prev=p;
                     }
-                    String s=text.toString().trim();
-                    if(!s.isEmpty()&&maxX>minX)
-                        out.add(new LayoutLine(s,minX,minY,maxX-minX,maxY-minY,size));
+                    piece.add(p);prev=p;
                 }
+                addLine(out,piece);
             }
             Collections.sort(out,(a,b)->{
-                int y=Float.compare(a.y,b.y);
-                if(y!=0)return y;
-                return Float.compare(a.x,b.x);
+                int y=Float.compare(a.y,b.y);return y!=0?y:Float.compare(a.x,b.x);
             });
             return out;
         }
 
-        private static boolean endsWithSpace(StringBuilder s){
-            return s.length()>0&&Character.isWhitespace(s.charAt(s.length()-1));
-        }
-
-        private static List<List<TextPosition>> splitColumns(List<TextPosition> row){
-            List<List<TextPosition>> pieces=new ArrayList<>();
-            if(row.isEmpty())return pieces;
-            List<TextPosition> current=new ArrayList<>();
-            TextPosition prev=null;
-            for(TextPosition p:row){
+        private void addLine(List<LayoutLine> out,List<TextPosition> piece){
+            if(piece==null||piece.isEmpty())return;
+            StringBuilder s=new StringBuilder();float minX=Float.MAX_VALUE,minY=Float.MAX_VALUE;
+            float maxX=0,maxY=0,size=0;TextPosition prev=null;
+            for(TextPosition p:piece){
+                String u=p.getUnicode();if(u==null)continue;
                 if(prev!=null){
-                    float gap=p.getXDirAdj()-(prev.getXDirAdj()+prev.getWidthDirAdj());
-                    // Large gaps are normally column/figure boundaries, while
-                    // ordinary word spacing is much smaller than this.
-                    float threshold=Math.max(42f,prev.getFontSizeInPt()*3.5f);
-                    if(gap>threshold&&!current.isEmpty()){
-                        pieces.add(current);current=new ArrayList<>();
-                    }
+                    float gap=p.getX()-(prev.getX()+prev.getWidth());
+                    if(gap>Math.max(1.5f,p.getWidthOfSpace()*0.55f)&&s.length()>0)s.append(' ');
                 }
-                current.add(p);prev=p;
+                s.append(u);minX=Math.min(minX,p.getX());minY=Math.min(minY,p.getY());
+                maxX=Math.max(maxX,p.getX()+p.getWidth());maxY=Math.max(maxY,p.getY()+p.getHeight());
+                size=Math.max(size,p.getFontSizeInPt());prev=p;
             }
-            if(!current.isEmpty())pieces.add(current);
-            return pieces;
+            if(s.length()>0&&maxX>minX)out.add(new LayoutLine(s.toString().trim(),minX,minY,maxX-minX,maxY-minY,size));
         }
     }
 
     private static final class LayoutLine{
-        final String source;
-        final float x,y,width,height,fontSize;
-        LayoutLine(String s,float x,float y,float w,float h,float fs){
-            source=s;this.x=x;this.y=y;this.width=w;this.height=h;
-            this.fontSize=fs>0?fs:10f;
-        }
+        String source;final float x,y,width,height,fontSize;
+        LayoutLine(String s,float x,float y,float w,float h,float fs){source=s;this.x=x;this.y=y;this.width=w;this.height=h;this.fontSize=fs>0?fs:10f;}
     }
 
-    /**
-     * Fill the original visual line boxes from the translated page text.
-     * Explicit AI line breaks are treated as soft breaks; source geometry is
-     * authoritative so a PDF page cannot collapse into one long text column.
-     */
-    private static List<String> flowTranslation(String translated,List<LayoutLine> boxes,
-                                                 List<FontSlot> fonts)throws IOException{
-        List<String> out=new ArrayList<>();
-        if(boxes.isEmpty())return out;
+    private static final class LayoutUnit{
+        String source;final float x,y;float width,height,fontSize;final int column;float bottom;
+        LayoutUnit(String s,float x,float y,float w,float h,float fs,int c){source=s;this.x=x;this.y=y;width=w;height=h;fontSize=fs>0?fs:10f;column=c;bottom=y+h;}
+    }
 
-        List<String> words=new ArrayList<>();
-        String t=translated==null?"":translated.replace("\\r","");
-        for(String paragraph:t.split("\\n+")){
-            for(String w:paragraph.trim().split("\\s+"))if(!w.isEmpty())words.add(w);
+    private static String parseUnitResponse(String raw,int count,int page)throws IOException{
+        Map<Integer,String> m=parseUnitMap(raw,count);
+        StringBuilder out=new StringBuilder();
+        for(int i=0;i<count;i++){
+            String v=m.get(i);if(v==null)throw new IOException("AI thiếu UNIT_"+i+" ở trang "+page);
+            if(i>0)out.append("\\n");
+            out.append("[[[UNIT_").append(i).append("]]]\\n").append(v.trim());
         }
+        return out.toString();
+    }
 
-        // Estimate whether the translation needs smaller text. We never shrink
-        // headings to the body size: the reduction is capped per source line.
-        int wi=0;
-        for(LayoutLine box:boxes){
-            if(wi>=words.size()){out.add("");continue;}
-            StringBuilder line=new StringBuilder();
-            float baseSize=Math.max(6f,Math.min(18f,box.fontSize));
-            while(wi<words.size()){
-                String candidate=line.length()==0?words.get(wi):line+" "+words.get(wi);
-                float measured=measureWidth(candidate,fonts,baseSize);
-                if(line.length()>0&&measured>Math.max(10f,box.width))break;
-                line.append(line.length()==0?"":" ").append(words.get(wi++));
-            }
-            out.add(line.toString());
+    private static Map<Integer,String> parseUnitMap(String raw,int count)throws IOException{
+        Map<Integer,String> out=new HashMap<>();
+        if(raw==null)return out;
+        java.util.regex.Pattern p=java.util.regex.Pattern.compile("\\\\[\\\\[\\\\[UNIT_(\\\\d+)\\\\]\\\\]\\\\]\\\\s*",java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher m=p.matcher(raw);
+        List<Integer> ids=new ArrayList<>();List<Integer> starts=new ArrayList<>();
+        while(m.find()){ids.add(Integer.parseInt(m.group(1)));starts.add(m.end());}
+        for(int i=0;i<ids.size();i++){
+            int id=ids.get(i);if(id<0||id>=count)continue;
+            int end=i+1<starts.size()?mStart(raw,starts.get(i+1),ids.get(i+1)):raw.length();
+            String v=raw.substring(starts.get(i),end).trim();
+            out.put(id,v);
         }
-
-        // If the translated text still has words left, retry the whole body at
-        // a slightly smaller size by packing words more aggressively. This is
-        // preferable to putting hundreds of words into the final line.
-        if(wi<words.size()){
-            out.clear();wi=0;
-            for(LayoutLine box:boxes){
-                if(wi>=words.size()){out.add("");continue;}
-                StringBuilder line=new StringBuilder();
-                float size=Math.max(6f,Math.min(18f,box.fontSize*0.82f));
-                while(wi<words.size()){
-                    String candidate=line.length()==0?words.get(wi):line+" "+words.get(wi);
-                    if(line.length()>0&&measureWidth(candidate,fonts,size)>Math.max(10f,box.width))break;
-                    line.append(line.length()==0?"":" ").append(words.get(wi++));
-                }
-                out.add(line.toString());
-            }
-        }
-        while(out.size()<boxes.size())out.add("");
         return out;
     }
 
-    private static float fitFontSize(String text,List<FontSlot> fonts,float sourceSize,float maxWidth)
-            throws IOException{
-        float size=Math.max(6f,Math.min(18f,sourceSize));
-        float measured=measureWidth(text,fonts,size);
-        if(measured>Math.max(10f,maxWidth)){
-            size=Math.max(5.5f,size*Math.max(10f,maxWidth)/measured);
-        }
-        return size;
-    }
-
-    /** Remove BT...ET text sections while keeping images/vector graphics intact. */
-    private static void stripTextOperators(PDDocument doc,PDPage page)throws IOException{
-        PDFStreamParser parser=new PDFStreamParser(page);parser.parse();
-        List<Object> kept=new ArrayList<>();boolean inText=false;
-        for(Object token:parser.getTokens()){
-            if(token instanceof Operator){
-                String name=((Operator)token).getName();
-                if("BT".equals(name)){inText=true;continue;}
-                if("ET".equals(name)){inText=false;continue;}
-                if(inText)continue;
-            }else if(inText)continue;
-            kept.add(token);
-        }
-        PDStream replacement=new PDStream(doc);
-        try(OutputStream os=replacement.createOutputStream()){
-            new ContentStreamWriter(os).writeTokens(kept);
-        }
-        page.setContents(replacement);
+    private static int mStart(String raw,int after,int nextId){
+        String marker="[[[UNIT_"+nextId+"]]]";
+        int idx=raw.lastIndexOf(marker,after);
+        return idx>=0?idx:after;
     }
 
     private static List<FontSlot> loadFonts(PDDocument out)throws IOException{
