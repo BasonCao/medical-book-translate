@@ -200,7 +200,7 @@ public final class PdfTranslationJob {
         final List<TextPosition> glyphs=new ArrayList<>();
         LayoutStripper()throws IOException{super();}
 
-        @Override protected void processTextPosition(TextPosition text)throws IOException{
+        @Override protected void processTextPosition(TextPosition text){
             String u=text.getUnicode();
             if(u!=null&&!u.isEmpty())glyphs.add(text);
             super.processTextPosition(text);
