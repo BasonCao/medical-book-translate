@@ -182,10 +182,10 @@ public final class PdfTranslationJob {
                                             List<LayoutUnit> units,
                                             Map<Integer,String> translated,
                                             List<FontSlot> fonts)throws IOException{
+        // Capture table geometry before rewriting page streams.
+        List<TableRegion> tables=collectTableRegions(page);
+
         // Remove source text while preserving the original vector graphics.
-        // IMPORTANT: do not reconstruct table fills from PDColor.toRGB(). Some
-        // medical PDFs use CMYK/ICC colors; converting them to RGB and redrawing
-        // can turn light table cells into black rectangles.
         stripTextOperators(doc,page);
 
         float pageHeight=page.getMediaBox().getHeight();
@@ -194,6 +194,8 @@ public final class PdfTranslationJob {
             for(int n=0;n<units.size();n++){
                 String text=translated.get(n);
                 if(text==null||text.trim().isEmpty())continue;
+                if(drawTableCellIfNeeded(cs,text,units.get(n),fonts,pageHeight,tables))
+                    continue;
                 drawUnit(cs,text,units.get(n),fonts,pageHeight);
             }
         }
