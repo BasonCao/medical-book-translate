@@ -568,74 +568,242 @@ public final class PdfTranslationJob {
     }
 
     /**
-     * Collect long vertical vector lines/rectangle edges. Publisher tables in
-     * the target PDF use these as real cell dividers, which gives us a reliable
-     * boundary even when the two cell texts are separated by only ~5pt.
+     * Detect repeated vector grids used by publisher tables.
+     *
+     * The target PDF uses multiple long horizontal rules plus one vertical
+     * divider. We retain only repeated wide rules, which prevents a logo or
+     * isolated colored box from being mistaken for a table.
      */
-    private static Set<Float> collectVerticalGuides(PDPage page)throws IOException{
-        GuideCollector collector=new GuideCollector(page);
+    private static List<TableRegion> collectTableRegions(PDPage page)throws IOException{
+        GridCollector collector=new GridCollector(page);
         collector.processPage(page);
-        return collector.guides;
+
+        List<GuideLine> hs=new ArrayList<>();
+        for(GuideLine line:collector.horizontal){
+            if(line.length()>=70f)hs.add(line);
+        }
+        if(hs.isEmpty())return Collections.emptyList();
+
+        // Group nearly-coincident horizontal segments.
+        Collections.sort(hs,(a,b)->Float.compare(a.y,b.y));
+        List<GuideLine> grouped=new ArrayList<>();
+        for(GuideLine line:hs){
+            GuideLine hit=null;
+            for(GuideLine g:grouped){
+                if(Math.abs(g.y-line.y)<=1.5f
+                        && overlapRatio(g.x1,g.x2,line.x1,line.x2)>=0.70f){
+                    hit=g;break;
+                }
+            }
+            if(hit==null)grouped.add(new GuideLine(line.x1,line.x2,line.y));
+            else{
+                hit.x1=Math.min(hit.x1,line.x1);
+                hit.x2=Math.max(hit.x2,line.x2);
+            }
+        }
+
+        if(grouped.size()<4)return Collections.emptyList();
+
+        // The table is the repeated family with the widest common span.
+        GuideLine anchor=null;
+        for(GuideLine line:grouped){
+            if(anchor==null||line.length()>anchor.length())anchor=line;
+        }
+        if(anchor==null)return Collections.emptyList();
+
+        List<GuideLine> family=new ArrayList<>();
+        for(GuideLine line:grouped){
+            if(Math.abs(line.x1-anchor.x1)<=6f
+                    &&Math.abs(line.x2-anchor.x2)<=6f
+                    &&line.length()>=Math.max(55f,anchor.length()*0.75f)){
+                family.add(line);
+            }
+        }
+        if(family.size()<4)return Collections.emptyList();
+
+        Collections.sort(family,(a,b)->Float.compare(a.y,b.y));
+        float x0=anchor.x1;
+        float x1=anchor.x2;
+        float pdfTopY=family.get(0).y;
+        float pdfBottomY=family.get(family.size()-1).y;
+        float pageH=page.getMediaBox().getHeight();
+        float top=Math.min(pageH-pdfTopY,pageH-pdfBottomY);
+        float bottom=Math.max(pageH-pdfTopY,pageH-pdfBottomY);
+
+        // Collect vertical dividers that actually span a meaningful fraction
+        // of the repeated horizontal-rule family.
+        List<Float> verticals=new ArrayList<>();
+        verticals.add(x0);
+        verticals.add(x1);
+        float regionPdfMin=Math.min(pdfTopY,pdfBottomY);
+        float regionPdfMax=Math.max(pdfTopY,pdfBottomY);
+
+        for(GuideLine line:collector.vertical){
+            if(line.length()<8f)continue;
+            float x=(line.x1+line.x2)*0.5f;
+            if(x<x0-2f||x>x1+2f)continue;
+            float a=Math.min(line.y1,line.y2);
+            float b=Math.max(line.y1,line.y2);
+            float overlap=Math.max(0f,Math.min(b,regionPdfMax)-Math.max(a,regionPdfMin));
+            if(overlap>Math.max(8f,(regionPdfMax-regionPdfMin)*0.18f))
+                verticals.add(x);
+        }
+        verticals=uniqueFloats(verticals,1.5f);
+        if(verticals.size()<3)return Collections.emptyList();
+
+        List<Float> horizontals=new ArrayList<>();
+        for(GuideLine line:family)horizontals.add(pageH-line.y);
+        horizontals=uniqueFloats(horizontals,1.5f);
+
+        List<TableRegion> result=new ArrayList<>();
+        result.add(new TableRegion(x0,x1,top,bottom,verticals,horizontals));
+        return result;
     }
 
-    private static final class GuideCollector extends PDFGraphicsStreamEngine{
-        final Set<Float> guides=new HashSet<>();
-        private PointF currentPoint;
-        private PointF subpathStart;
+    private static float overlapRatio(float a0,float a1,float b0,float b1){
+        float left=Math.max(Math.min(a0,a1),Math.min(b0,b1));
+        float right=Math.min(Math.max(a0,a1),Math.max(b0,b1));
+        float overlap=Math.max(0f,right-left);
+        float shorter=Math.min(Math.abs(a1-a0),Math.abs(b1-b0));
+        return shorter<=0f?0f:overlap/shorter;
+    }
 
-        GuideCollector(PDPage page){super(page);}
+    private static List<Float> uniqueFloats(List<Float> values,float tolerance){
+        Collections.sort(values);
+        List<Float> out=new ArrayList<>();
+        for(Float value:values){
+            if(value==null)continue;
+            if(out.isEmpty()||Math.abs(out.get(out.size()-1)-value)>tolerance)
+                out.add(value);
+            else
+                out.set(out.size()-1,(out.get(out.size()-1)+value)*0.5f);
+        }
+        return out;
+    }
 
-        private void addVertical(float x1,float y1,float x2,float y2){
-            if(Math.abs(x2-x1)<=1.2f && Math.abs(y2-y1)>=8f){
-                guides.add((x1+x2)*0.5f);
-            }
+    private static final class GuideLine{
+        float x1,x2,y,y1,y2;
+        GuideLine(float x1,float x2,float y){
+            this.x1=Math.min(x1,x2);
+            this.x2=Math.max(x1,x2);
+            this.y=y;
+            this.y1=y;
+            this.y2=y;
+        }
+        GuideLine(float x1,float y1,float x2,float y2){
+            this.x1=x1;
+            this.x2=x2;
+            this.y=y1;
+            this.y1=y1;
+            this.y2=y2;
+        }
+        float length(){
+            return (float)Math.hypot(x2-x1,y2-y1);
+        }
+    }
+
+    private static final class GridCollector extends PDFGraphicsStreamEngine{
+        final List<GuideLine> horizontal=new ArrayList<>();
+        final List<GuideLine> vertical=new ArrayList<>();
+        private PointF current;
+        private PointF start;
+
+        GridCollector(PDPage page){super(page);}
+
+        private void addSegment(float x1,float y1,float x2,float y2){
+            if(Math.abs(y2-y1)<=1.5f&&Math.abs(x2-x1)>=40f)
+                horizontal.add(new GuideLine(x1,x2,(y1+y2)*0.5f));
+            if(Math.abs(x2-x1)<=1.5f&&Math.abs(y2-y1)>=8f)
+                vertical.add(new GuideLine(x1,y1,x2,y2));
         }
 
         @Override public void moveTo(float x,float y){
-            currentPoint=new PointF(x,y);
-            subpathStart=new PointF(x,y);
+            current=new PointF(x,y);
+            start=new PointF(x,y);
         }
 
         @Override public void lineTo(float x,float y){
-            if(currentPoint!=null)addVertical(currentPoint.x,currentPoint.y,x,y);
-            currentPoint=new PointF(x,y);
+            if(current!=null)addSegment(current.x,current.y,x,y);
+            current=new PointF(x,y);
         }
 
         @Override public void appendRectangle(PointF p0,PointF p1,PointF p2,PointF p3){
-            addVertical(p0.x,p0.y,p1.x,p1.y);
-            addVertical(p1.x,p1.y,p2.x,p2.y);
-            addVertical(p2.x,p2.y,p3.x,p3.y);
-            addVertical(p3.x,p3.y,p0.x,p0.y);
-            currentPoint=p0;
-            subpathStart=p0;
+            addSegment(p0.x,p0.y,p1.x,p1.y);
+            addSegment(p1.x,p1.y,p2.x,p2.y);
+            addSegment(p2.x,p2.y,p3.x,p3.y);
+            addSegment(p3.x,p3.y,p0.x,p0.y);
+            current=p0;
+            start=p0;
         }
 
         @Override public void closePath(){
-            if(currentPoint!=null&&subpathStart!=null){
-                addVertical(currentPoint.x,currentPoint.y,subpathStart.x,subpathStart.y);
-                currentPoint=subpathStart;
-            }
+            if(current!=null&&start!=null)addSegment(current.x,current.y,start.x,start.y);
+            current=start;
         }
 
         @Override public void curveTo(float x1,float y1,float x2,float y2,float x3,float y3){
-            currentPoint=new PointF(x3,y3);
+            current=new PointF(x3,y3);
         }
 
-        @Override public void endPath(){
-            currentPoint=null;
-            subpathStart=null;
-        }
-
-        @Override public PointF getCurrentPoint(){return currentPoint;}
+        @Override public void endPath(){current=null;start=null;}
+        @Override public PointF getCurrentPoint(){return current;}
         @Override public void clip(Path.FillType windingRule){}
         @Override public void fillAndStrokePath(Path.FillType windingRule){}
         @Override public void fillPath(Path.FillType windingRule){}
         @Override public void shadingFill(COSName shadingName){}
-        @Override public void strokePath(){
-            currentPoint=null;
-            subpathStart=null;
-        }
+        @Override public void strokePath(){current=null;start=null;}
         @Override public void drawImage(PDImage pdImage)throws IOException{}
+    }
+
+    private static final class TableRegion{
+        final float x0,x1,top,bottom;
+        final List<Float> verticals,horizontals;
+
+        TableRegion(float x0,float x1,float top,float bottom,
+                    List<Float> verticals,List<Float> horizontals){
+            this.x0=x0;
+            this.x1=x1;
+            this.top=top;
+            this.bottom=bottom;
+            this.verticals=verticals;
+            this.horizontals=horizontals;
+        }
+
+        boolean contains(float x,float y){
+            return x>=x0-2f&&x<=x1+2f&&y>=top-2f&&y<=bottom+2f;
+        }
+
+        float leftOf(float x){
+            float result=x0;
+            for(Float v:verticals){
+                if(v<=x+1f)result=v;
+            }
+            return result;
+        }
+
+        float rightOf(float x){
+            float result=x1;
+            for(Float v:verticals){
+                if(v>x+1f){result=v;break;}
+            }
+            return result;
+        }
+
+        float rowTop(float y){
+            float result=top;
+            for(Float h:horizontals){
+                if(h<=y+1f)result=h;
+            }
+            return result;
+        }
+
+        float rowBottom(float y){
+            float result=bottom;
+            for(Float h:horizontals){
+                if(h>y+1f){result=h;break;}
+            }
+            return result;
+        }
     }
 
     private static final class LayoutStripper extends PDFTextStripper{
