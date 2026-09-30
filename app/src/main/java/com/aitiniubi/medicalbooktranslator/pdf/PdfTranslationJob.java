@@ -10,6 +10,8 @@ import com.tom_roush.pdfbox.pdmodel.common.PDStream;
 import com.tom_roush.pdfbox.pdfparser.PDFStreamParser;
 import com.tom_roush.pdfbox.pdfwriter.ContentStreamWriter;
 import com.tom_roush.pdfbox.contentstream.operator.Operator;
+import com.tom_roush.pdfbox.contentstream.PDFGraphicsStreamEngine;
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImage;
 import com.tom_roush.pdfbox.text.TextPosition;
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle;
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
@@ -183,79 +185,182 @@ public final class PdfTranslationJob {
         return left&&right;
     }
 
+
     private static void buildSingleColumnPage(PDDocument doc,PDPage page,
                                                List<LayoutUnit> units,
                                                Map<Integer,String> translated,
                                                List<FontSlot> fonts)throws IOException{
-        PDResources resources=page.getResources();
-        List<PDImageXObject> images=new ArrayList<>();
-        if(resources!=null){
-            for(COSName name:resources.getXObjectNames()){
-                try{
-                    PDXObject xo=resources.getXObject(name);
-                    if(xo instanceof PDImageXObject)images.add((PDImageXObject)xo);
-                }catch(Exception ignored){}
-            }
-        }
-
-        // Remove the original two-column text/vector layer. Images are retained
-        // from the page resources and redrawn below the translated reading column.
-        page.setContents(new PDStream(doc));
-
         float pageW=page.getMediaBox().getWidth();
         float pageH=page.getMediaBox().getHeight();
         float margin=34f;
-        float maxW=Math.max(100f,pageW-margin*2f);
-        float imageWidth=Math.min(maxW,pageW*0.62f);
-        float imageGap=12f;
-        float totalImageHeight=0f;
-        List<float[]> imageSizes=new ArrayList<>();
+        float maxW=Math.max(120f,pageW-margin*2f);
 
-        for(PDImageXObject image:images){
-            float ratio=image.getHeight()>0?(float)image.getWidth()/image.getHeight():1f;
-            float w=imageWidth;
-            float h=w/Math.max(0.1f,ratio);
-            imageSizes.add(new float[]{w,h});
-            totalImageHeight+=h+imageGap;
-        }
-
-        float availableTextHeight=Math.max(80f,pageH-margin*2f-totalImageHeight-12f);
-        float size=10f;
-        List<String> flowLines=new ArrayList<>();
-
-        while(size>=5.5f){
-            flowLines.clear();
-            for(int n=0;n<units.size();n++){
-                String text=translated.get(n);
-                if(text==null||text.trim().isEmpty())continue;
-                flowLines.addAll(wrapText(sanitizeForPdf(text).trim(),fonts,size,maxW));
-                flowLines.add("");
+        List<ImagePlacement> placements=collectImagePlacements(page);
+        if(placements.isEmpty()){
+            PDResources resources=page.getResources();
+            if(resources!=null){
+                for(COSName name:resources.getXObjectNames()){
+                    try{
+                        PDXObject xo=resources.getXObject(name);
+                        if(xo instanceof PDImageXObject){
+                            PDImageXObject image=(PDImageXObject)xo;
+                            float ratio=image.getHeight()>0?(float)image.getWidth()/image.getHeight():1f;
+                            placements.add(new ImagePlacement(image,0,0,image.getWidth(),
+                                    image.getHeight(),pageH));
+                        }
+                    }catch(Exception ignored){}
+                }
             }
-            if(!flowLines.isEmpty())flowLines.remove(flowLines.size()-1);
-            if(flowLines.size()*size*1.18f<=availableTextHeight)break;
-            size-=0.4f;
         }
+
+        // Rebuild detected two-column pages as one continuous reading column.
+        // The old text layer is removed so the longer Vietnamese translation
+        // can reflow naturally without colliding with the original columns.
+        page.setContents(new PDStream(doc));
+
+        List<FlowItem> header=new ArrayList<>();
+        List<FlowItem> left=new ArrayList<>();
+        List<FlowItem> right=new ArrayList<>();
+
+        for(int i=0;i<units.size();i++){
+            String text=translated.get(i);
+            if(text==null||text.trim().isEmpty())continue;
+            LayoutUnit u=units.get(i);
+            FlowItem item=FlowItem.text(text,u.y);
+            if(u.column<0)header.add(item);
+            else if(u.column==0)left.add(item);
+            else right.add(item);
+        }
+
+        for(ImagePlacement p:placements){
+            float cx=p.x+p.width/2f;
+            FlowItem item=FlowItem.image(p,p.top);
+            if(cx<pageW*0.25f)left.add(item);
+            else if(cx>pageW*0.75f)right.add(item);
+            else header.add(item);
+        }
+
+        Comparator<FlowItem> byY=(a,b)->Float.compare(a.top,b.top);
+        Collections.sort(header,byY);
+        Collections.sort(left,byY);
+        Collections.sort(right,byY);
+
+        List<FlowItem> flow=new ArrayList<>();
+        flow.addAll(header);
+        flow.addAll(left);
+        flow.addAll(right);
+
+        float imageMaxW=Math.min(maxW,maxW*0.82f);
+        float size=9.4f;
+        while(size>6.2f && estimateFlowHeight(flow,fonts,size,maxW,imageMaxW)>pageH-margin*2f)
+            size-=0.35f;
 
         try(PDPageContentStream cs=new PDPageContentStream(doc,page)){
-            float y=pageH-margin-size;
-            cs.beginText();
-            for(String line:flowLines){
-                if(y<margin+size)break;
-                cs.setTextMatrix(Matrix.getTranslateInstance(margin,y));
-                showTextWithFallback(cs,line,fonts,size);
-                y-=size*1.18f;
-            }
-            cs.endText();
+            float top=pageH-margin;
+            for(FlowItem item:flow){
+                if(item.image!=null){
+                    float ratio=item.image.height>0?item.image.width/item.image.height:1f;
+                    float w=Math.min(imageMaxW,item.image.width);
+                    float h=w/Math.max(0.1f,ratio);
+                    top-=h;
+                    if(top<margin)break;
+                    float x=(pageW-w)/2f;
+                    cs.drawImage(item.image.image,x,top,w,h);
+                    top-=10f;
+                    continue;
+                }
 
-            float imageY=margin;
-            for(int i=0;i<images.size();i++){
-                float[] wh=imageSizes.get(i);
-                if(imageY+wh[1]>pageH-margin)break;
-                float x=(pageW-wh[0])/2f;
-                cs.drawImage(images.get(i),x,imageY,wh[0],wh[1]);
-                imageY+=wh[1]+imageGap;
+                String clean=sanitizeForPdf(item.text).trim();
+                if(clean.isEmpty())continue;
+                List<String> lines=wrapText(clean,fonts,size,maxW);
+                float leading=size*1.22f;
+                if(top-size<margin)break;
+                cs.beginText();
+                cs.setFont(fonts.get(0).font,size);
+                for(String line:lines){
+                    if(top-size<margin)break;
+                    cs.setTextMatrix(Matrix.getTranslateInstance(margin,top-size));
+                    showTextWithFallback(cs,line,fonts,size);
+                    top-=leading;
+                }
+                cs.endText();
+                top-=4f;
             }
         }
+    }
+
+    private static float estimateFlowHeight(List<FlowItem> flow,List<FontSlot> fonts,
+                                            float size,float maxW,float imageMaxW)throws IOException{
+        float total=0f;
+        for(FlowItem item:flow){
+            if(item.image!=null){
+                float ratio=item.image.height>0?item.image.width/item.image.height:1f;
+                float w=Math.min(imageMaxW,item.image.width);
+                total+=w/Math.max(0.1f,ratio)+10f;
+            }else{
+                List<String> lines=wrapText(sanitizeForPdf(item.text).trim(),fonts,size,maxW);
+                total+=lines.size()*size*1.22f+4f;
+            }
+        }
+        return total;
+    }
+
+    private static List<ImagePlacement> collectImagePlacements(PDPage page)throws IOException{
+        ImageCollector collector=new ImageCollector(page);
+        collector.processPage(page);
+        return collector.images;
+    }
+
+    private static final class FlowItem{
+        final String text;
+        final ImagePlacement image;
+        final float top;
+        private FlowItem(String t,ImagePlacement i,float y){text=t;image=i;top=y;}
+        static FlowItem text(String t,float y){return new FlowItem(t,null,y);}
+        static FlowItem image(ImagePlacement i,float y){return new FlowItem(null,i,y);}
+    }
+
+    private static final class ImagePlacement{
+        final PDImageXObject image;
+        final float x,y,width,height,top;
+        ImagePlacement(PDImageXObject image,float x,float y,float w,float h,float pageHeight){
+            this.image=image;this.x=x;this.y=y;this.width=Math.abs(w);this.height=Math.abs(h);
+            this.top=pageHeight-(Math.min(y,y+h)+Math.abs(h));
+        }
+    }
+
+    private static final class ImageCollector extends PDFGraphicsStreamEngine{
+        final List<ImagePlacement> images=new ArrayList<>();
+        ImageCollector(PDPage page){super(page);}
+
+        @Override public void drawImage(PDImage pdImage)throws IOException{
+            if(!(pdImage instanceof PDImageXObject))return;
+            Matrix m=getGraphicsState().getCurrentTransformationMatrix();
+            java.awt.geom.Point2D.Float p0=m.transformPoint(0,0);
+            java.awt.geom.Point2D.Float p1=m.transformPoint(1,0);
+            java.awt.geom.Point2D.Float p2=m.transformPoint(0,1);
+            java.awt.geom.Point2D.Float p3=m.transformPoint(1,1);
+            float minX=Math.min(Math.min(p0.x,p1.x),Math.min(p2.x,p3.x));
+            float maxX=Math.max(Math.max(p0.x,p1.x),Math.max(p2.x,p3.x));
+            float minY=Math.min(Math.min(p0.y,p1.y),Math.min(p2.y,p3.y));
+            float maxY=Math.max(Math.max(p0.y,p1.y),Math.max(p2.y,p3.y));
+            images.add(new ImagePlacement((PDImageXObject)pdImage,minX,minY,
+                    maxX-minX,maxY-minY,getPage().getMediaBox().getHeight()));
+        }
+
+        @Override public void appendRectangle(java.awt.geom.Point2D p0,java.awt.geom.Point2D p1,
+                                               java.awt.geom.Point2D p2,java.awt.geom.Point2D p3){}
+        @Override public void clip(int windingRule){}
+        @Override public void closePath(){}
+        @Override public void curveTo(float x1,float y1,float x2,float y2,float x3,float y3){}
+        @Override public void endPath(){}
+        @Override public void fillAndStrokePath(int windingRule){}
+        @Override public void fillPath(int windingRule){}
+        @Override public java.awt.geom.Point2D getCurrentPoint(){return null;}
+        @Override public void lineTo(float x,float y){}
+        @Override public void moveTo(float x,float y){}
+        @Override public void shadingFill(COSName shadingName){}
+        @Override public void strokePath(){}
     }
 
     private static void drawUnit(PDPageContentStream cs,String text,LayoutUnit unit,
