@@ -14,6 +14,7 @@ import com.tom_roush.pdfbox.text.TextPosition;
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle;
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
+import com.tom_roush.pdfbox.util.Matrix;
 import java.io.*;
 import java.util.*;
 
@@ -188,9 +189,8 @@ public final class PdfTranslationJob {
                 String line=lines.get(i);
                 float y=pageHeight-(yTop+i*leading)-size*0.84f;
                 if(y<1f)y=1f;
-                cs.newLineAtOffset(unit.x,y);
+                cs.setTextMatrix(Matrix.getTranslateInstance(unit.x,y));
                 showTextWithFallback(cs,line,fonts,size);
-                cs.newLineAtOffset(-unit.x,-y);
             }
             cs.endText();
         }catch(Exception e){
@@ -270,12 +270,11 @@ public final class PdfTranslationJob {
             LayoutUnit current=null;
             for(LayoutLine line:lines){
                 float verticalGap=current==null?Float.MAX_VALUE:line.y-current.bottom;
-                float sizeChange=current==null?0f:
-                        Math.abs(line.fontSize-current.fontSize)/
-                        Math.max(1f,Math.max(line.fontSize,current.fontSize));
-                boolean newUnit=current==null
-                        || verticalGap>8f
-                        || sizeChange>0.25f;
+                // Do not split a paragraph merely because a PDF font size changes.
+                // Font-size changes inside the same visual block are common in
+                // journal PDFs (bold/italic/superscript), and splitting there can
+                // create overlapping translated blocks.
+                boolean newUnit=current==null || verticalGap>8f;
                 if(newUnit){
                     if(current!=null)out.add(current);
                     current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
@@ -393,7 +392,7 @@ public final class PdfTranslationJob {
         for(int i=0;i<ids.size();i++){
             int id=ids.get(i);if(id<0||id>=count)continue;
             int end=i+1<markerStarts.size()?markerStarts.get(i+1):raw.length();
-            out.put(id,raw.substring(contentStarts.get(i),end).trim());
+            out.put(id,raw.substring(contentStarts.get(i),end).replace("\\\\n","\\n").trim());
         }
         return out;
     }
