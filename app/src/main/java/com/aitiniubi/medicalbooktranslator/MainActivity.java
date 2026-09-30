@@ -58,6 +58,8 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         setContentView(com.aitiniubi.medicalbooktranslator.R.layout.activity_main);
+        TextView appTitle=findViewById(R.id.appTitle);
+        appTitle.setText("Medical Book Translator V"+BuildConfig.VERSION_NAME);
         prefsHolder=getSharedPreferences("config",MODE_PRIVATE);
         status=findViewById(R.id.status);
         report=findViewById(R.id.report);
