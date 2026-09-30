@@ -54,12 +54,21 @@ public final class TranslationJob {
                     rebuild(source,draft,units,doneMap);copyFile(draft,output);listener.onDone(output);return;
                 }
 
-                int batchNo=0;
-                for(int start=0;start<pending.size();){
-                    List<Unit> batch=makeBatch(pending,start);batchNo++;
-                    String context="Medical obstetric ultrasound / fetal medicine textbook. Translate English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations and inline HTML/XML markup.";
-                    try{
-                        Map<String,String> got=translateBatch(batch,context,providers);
+                final List<GlossaryManager.Term> glossary=GlossaryManager.load(workspace);
+                final int parallelism=3;
+                java.util.concurrent.ExecutorService pool=java.util.concurrent.Executors.newFixedThreadPool(parallelism);
+                java.util.concurrent.CompletionService<BatchResult> completion=new java.util.concurrent.ExecutorCompletionService<>(pool);
+                int next=0,submitted=0,completedBatches=0;
+                while(next<pending.size() && submitted<parallelism){
+                    List<Unit> batch=makeBatch(pending,next); next+=batch.size(); submitted++;
+                    completion.submit(()->translateOneBatch(batch,providers,glossary));
+                }
+                try{
+                    while(completedBatches<submitted){
+                        BatchResult br=completion.take().get();
+                        completedBatches++;
+                        Map<String,String> got=br.translations;
+                        List<Unit> batch=br.batch;
                         for(Unit u:batch){
                             String t=got.get(u.id);
                             if(blank(t))t=TranslationRouter.translate(u.inner,context+" Return only the translated HTML fragment.",providers);
@@ -70,16 +79,17 @@ public final class TranslationJob {
                             listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
                         }
                         store.saveManifest(sourceHash,source.getName(),total,done);
-                        File draft=new File(workspace,"translated-current.epub");
-                        rebuild(source,draft,units,doneMap);
-                        start+=batch.size();
-                    }catch(Exception e){
-                        store.saveManifest(sourceHash,source.getName(),total,done);
-                        File draft=new File(workspace,"translated-current.epub");
-                        rebuild(source,draft,units,doneMap);
-                        listener.onPaused(draft,done,total,e);return;
+                        if(next<pending.size()){
+                            List<Unit> nextBatch=makeBatch(pending,next);next+=nextBatch.size();submitted++;
+                            completion.submit(()->translateOneBatch(nextBatch,providers,glossary));
+                        }
                     }
-                }
+                }catch(Exception e){
+                    store.saveManifest(sourceHash,source.getName(),total,done);
+                    File draft=new File(workspace,"translated-current.epub");
+                    rebuild(source,draft,units,doneMap);
+                    listener.onPaused(draft,done,total,e);return;
+                }finally{pool.shutdownNow();}
 
                 File finalDraft=new File(workspace,"translated-current.epub");
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
@@ -135,6 +145,16 @@ public final class TranslationJob {
             b.add(u);chars+=cost;
         }
         return b;
+    }
+
+    private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
+        StringBuilder context=new StringBuilder("Medical obstetric ultrasound / fetal medicine textbook. Translate English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations and inline HTML/XML markup.");
+        StringBuilder combined=new StringBuilder();
+        for(Unit u:batch)combined.append(strip(u.inner)).append("\n");
+        String gt=GlossaryManager.promptTerms(combined.toString(),glossary);
+        if(!gt.isEmpty())context.append("\n\n").append(gt);
+        Map<String,String> got=translateBatch(batch,context.toString(),providers);
+        return new BatchResult(batch,got);
     }
 
     private static Map<String,String> translateBatch(List<Unit> batch,String context,List<TranslationRouter.Provider> providers)throws Exception{
@@ -202,4 +222,8 @@ public final class TranslationJob {
         Unit(String id,String file,int ordinal,String tag,String attrs,String inner,String sh,boolean tr){this.id=id;this.file=file;this.ordinal=ordinal;this.tag=tag;this.attrs=attrs;this.inner=inner;this.sourceHash=sh;this.translatable=tr;}
     }
     private static final class Rep{final Unit u;final String t;Rep(Unit u,String t){this.u=u;this.t=t;}}
+    private static final class BatchResult{
+        final List<Unit> batch;final Map<String,String> translations;
+        BatchResult(List<Unit> b,Map<String,String> t){batch=b;translations=t;}
+    }
 }
