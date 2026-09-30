@@ -1,6 +1,8 @@
 package com.aitiniubi.medicalbooktranslator.pdf;
 
 import android.content.Context;
+import android.graphics.Path;
+import android.graphics.PointF;
 import com.aitiniubi.medicalbooktranslator.translation.TranslationRouter;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
@@ -336,10 +338,10 @@ public final class PdfTranslationJob {
         @Override public void drawImage(PDImage pdImage)throws IOException{
             if(!(pdImage instanceof PDImageXObject))return;
             Matrix m=getGraphicsState().getCurrentTransformationMatrix();
-            java.awt.geom.Point2D.Float p0=m.transformPoint(0,0);
-            java.awt.geom.Point2D.Float p1=m.transformPoint(1,0);
-            java.awt.geom.Point2D.Float p2=m.transformPoint(0,1);
-            java.awt.geom.Point2D.Float p3=m.transformPoint(1,1);
+            PointF p0=m.transformPoint(0,0);
+            PointF p1=m.transformPoint(1,0);
+            PointF p2=m.transformPoint(0,1);
+            PointF p3=m.transformPoint(1,1);
             float minX=Math.min(Math.min(p0.x,p1.x),Math.min(p2.x,p3.x));
             float maxX=Math.max(Math.max(p0.x,p1.x),Math.max(p2.x,p3.x));
             float minY=Math.min(Math.min(p0.y,p1.y),Math.min(p2.y,p3.y));
@@ -348,15 +350,15 @@ public final class PdfTranslationJob {
                     maxX-minX,maxY-minY,getPage().getMediaBox().getHeight()));
         }
 
-        @Override public void appendRectangle(java.awt.geom.Point2D p0,java.awt.geom.Point2D p1,
-                                               java.awt.geom.Point2D p2,java.awt.geom.Point2D p3){}
-        @Override public void clip(int windingRule){}
+        @Override public void appendRectangle(PointF p0,PointF p1,
+                                               PointF p2,PointF p3){}
+        @Override public void clip(Path.FillType windingRule){}
         @Override public void closePath(){}
         @Override public void curveTo(float x1,float y1,float x2,float y2,float x3,float y3){}
         @Override public void endPath(){}
-        @Override public void fillAndStrokePath(int windingRule){}
-        @Override public void fillPath(int windingRule){}
-        @Override public java.awt.geom.Point2D getCurrentPoint(){return null;}
+        @Override public void fillAndStrokePath(Path.FillType windingRule){}
+        @Override public void fillPath(Path.FillType windingRule){}
+        @Override public PointF getCurrentPoint(){return null;}
         @Override public void lineTo(float x,float y){}
         @Override public void moveTo(float x,float y){}
         @Override public void shadingFill(COSName shadingName){}
