@@ -35,7 +35,7 @@ public final class PdfTranslationJob {
     }
     private PdfTranslationJob(){}
 
-    public static void run(Context context,File source,File output,File workspace,List<TranslationRouter.Provider> providers,Listener listener){
+    public static void run(Context context,File source,File output,File workspace,List<TranslationRouter.Provider> providers,boolean singleColumn,Listener listener){
         new Thread(()->{
             try{
                 PDFBoxResourceLoader.init(context.getApplicationContext());
@@ -134,7 +134,7 @@ public final class PdfTranslationJob {
                 }
 
                 File draft=new File(workspace,"translated-current.pdf");
-                buildReflowPdf(context,source,draft,translations);
+                buildReflowPdf(context,source,draft,translations,singleColumn);
                 copyFile(draft,output);
                 listener.onDone(output);
             }catch(Exception e){
@@ -149,7 +149,7 @@ public final class PdfTranslationJob {
      * translated UNIT is then drawn inside its original visual bounding box.
      */
     private static void buildReflowPdf(Context context,File source,File output,
-                                       Map<Integer,String> translations)throws Exception{
+                                       Map<Integer,String> translations,boolean singleColumn)throws Exception{
         PDFBoxResourceLoader.init(context.getApplicationContext());
         try(PDDocument doc=PDDocument.load(source)){
             List<FontSlot> fonts=loadFonts(doc);
@@ -163,22 +163,32 @@ public final class PdfTranslationJob {
                 List<LayoutUnit> units=extractLayoutUnits(doc,i+1);
                 if(units.isEmpty())continue;
                 Map<Integer,String> translated=parseUnitMap(translations.get(i+1),units.size());
-                if(hasTwoColumnLayout(units)){
+                if(singleColumn && hasTwoColumnLayout(units)){
                     buildSingleColumnPage(doc,page,units,translated,fonts);
                 }else{
-                    stripTextOperators(doc,page);
-                    float pageHeight=page.getMediaBox().getHeight();
-                    try(PDPageContentStream cs=new PDPageContentStream(doc,page,
-                            PDPageContentStream.AppendMode.APPEND,true,true)){
-                        for(int n=0;n<units.size();n++){
-                            String text=translated.get(n);
-                            if(text==null||text.trim().isEmpty())continue;
-                            drawUnit(cs,text,units.get(n),fonts,pageHeight);
-                        }
-                    }
+                    buildTwoColumnPage(doc,page,units,translated,fonts);
                 }
             }
             doc.save(output);
+        }
+    }
+
+    /** V1.10: restore the original two-column page geometry. Original images,
+     * tables and vector artwork are retained; only the source text operators are
+     * removed and translated units are drawn back inside their original boxes. */
+    private static void buildTwoColumnPage(PDDocument doc,PDPage page,
+                                            List<LayoutUnit> units,
+                                            Map<Integer,String> translated,
+                                            List<FontSlot> fonts)throws IOException{
+        stripTextOperators(doc,page);
+        float pageHeight=page.getMediaBox().getHeight();
+        try(PDPageContentStream cs=new PDPageContentStream(doc,page,
+                PDPageContentStream.AppendMode.APPEND,true,true)){
+            for(int n=0;n<units.size();n++){
+                String text=translated.get(n);
+                if(text==null||text.trim().isEmpty())continue;
+                drawUnit(cs,text,units.get(n),fonts,pageHeight);
+            }
         }
     }
 
