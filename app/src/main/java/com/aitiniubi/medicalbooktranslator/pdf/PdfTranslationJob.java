@@ -501,6 +501,73 @@ public final class PdfTranslationJob {
         @Override public void strokePath(){}
     }
 
+    /**
+     * Render a translated unit using the complete vector table cell rectangle.
+     * This prevents narrow source numeric strings from forcing Vietnamese text
+     * into a tiny width and vertically stacked words.
+     */
+    private static boolean drawTableCellIfNeeded(PDPageContentStream cs,String text,
+                                                   LayoutUnit unit,List<FontSlot> fonts,
+                                                   float pageHeight,List<TableRegion> tables)
+            throws IOException{
+        if(tables==null||tables.isEmpty())return false;
+
+        float cx=unit.x+unit.width*0.5f;
+        float cy=unit.y+unit.height*0.5f;
+        TableRegion table=null;
+        for(TableRegion t:tables){
+            if(t.contains(cx,cy)){table=t;break;}
+        }
+        if(table==null)return false;
+
+        float left=table.leftOf(cx);
+        float right=table.rightOf(cx);
+        float top=table.rowTop(cy);
+        float bottom=table.rowBottom(cy);
+        if(right-left<12f||bottom-top<6f)return false;
+
+        float padX=3.0f;
+        float padY=1.2f;
+        float boxW=Math.max(12f,right-left-padX*2f);
+        float boxH=Math.max(7f,bottom-top-padY*2f);
+
+        float size=Math.max(5.3f,Math.min(9.2f,unit.fontSize));
+        List<String> lines;
+        float leading;
+        while(true){
+            lines=wrapText(sanitizeForPdf(text).trim(),fonts,size,boxW);
+            leading=size*1.14f;
+            if(lines.size()*leading<=boxH||size<=5.3f)break;
+            size=Math.max(5.3f,size-0.25f);
+        }
+
+        boolean rightCell=cx>=(table.x0+table.x1)*0.5f;
+        float contentH=lines.size()*leading;
+        float firstTop=top+padY+Math.max(0f,(boxH-contentH)*0.5f)+size*0.78f;
+
+        try{
+            cs.beginText();
+            cs.setFont(fonts.get(0).font,size);
+            for(int i=0;i<lines.size();i++){
+                String line=lines.get(i);
+                float lineW=measureWidth(line,fonts,size);
+                float x=rightCell
+                        ? left+(right-left-lineW)*0.5f
+                        : left+padX;
+                if(x<left+0.5f)x=left+0.5f;
+                float y=pageHeight-(firstTop+i*leading);
+                if(y<1f)y=1f;
+                cs.setTextMatrix(Matrix.getTranslateInstance(x,y));
+                showTextWithFallback(cs,line,fonts,size);
+            }
+            cs.endText();
+        }catch(Exception e){
+            try{cs.endText();}catch(Exception ignored){}
+            throw e;
+        }
+        return true;
+    }
+
     private static void drawUnit(PDPageContentStream cs,String text,LayoutUnit unit,
                                  List<FontSlot> fonts,float pageHeight)throws IOException{
         String clean=sanitizeForPdf(text).trim();
