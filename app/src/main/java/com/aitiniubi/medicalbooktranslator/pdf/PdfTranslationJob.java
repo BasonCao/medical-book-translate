@@ -236,7 +236,7 @@ public final class PdfTranslationJob {
         }
 
         List<LayoutUnit> buildUnits(float pageWidth){
-            List<LayoutLine> lines=buildLines();
+            List<LayoutLine> lines=buildLines(pageWidth);
             if(lines.isEmpty())return new ArrayList<>();
             Map<Integer,List<LayoutLine>> columns=new HashMap<>();
             for(LayoutLine line:lines){
@@ -269,7 +269,14 @@ public final class PdfTranslationJob {
             if(lines==null||lines.isEmpty())return;
             LayoutUnit current=null;
             for(LayoutLine line:lines){
-                if(current==null || line.y-current.bottom>Math.max(14f,line.height*1.7f)){
+                float verticalGap=current==null?Float.MAX_VALUE:line.y-current.bottom;
+                float sizeChange=current==null?0f:
+                        Math.abs(line.fontSize-current.fontSize)/
+                        Math.max(1f,Math.max(line.fontSize,current.fontSize));
+                boolean newUnit=current==null
+                        || verticalGap>8f
+                        || sizeChange>0.25f;
+                if(newUnit){
                     if(current!=null)out.add(current);
                     current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
                             columnOf(line,pageWidth));
@@ -291,7 +298,7 @@ public final class PdfTranslationJob {
             return l.x+l.width/2f<pageWidth/2f?0:1;
         }
 
-        List<LayoutLine> buildLines(){
+        List<LayoutLine> buildLines(float pageWidth){
             List<LayoutLine> out=new ArrayList<>();
             List<TextPosition> sorted=new ArrayList<>(glyphs);
             Collections.sort(sorted,(a,b)->{
@@ -318,8 +325,12 @@ public final class PdfTranslationJob {
                 for(TextPosition p:row){
                     if(prev!=null){
                         float gap=p.getX()-(prev.getX()+prev.getWidth());
+                        boolean crossesTwoColumns =
+                                (prev.getX()+prev.getWidth()) < pageWidth*0.49f
+                                && p.getX() > pageWidth*0.51f
+                                && gap > 8f;
                         float threshold=Math.max(42f,prev.getFontSizeInPt()*3.5f);
-                        if(gap>threshold&&!piece.isEmpty()){
+                        if((gap>threshold || crossesTwoColumns)&&!piece.isEmpty()){
                             addLine(out,piece);piece=new ArrayList<>();
                         }
                     }
