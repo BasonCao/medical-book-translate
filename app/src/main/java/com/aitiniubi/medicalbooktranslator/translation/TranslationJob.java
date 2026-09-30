@@ -42,7 +42,9 @@ public final class TranslationJob {
                 int done=0;
                 for(Unit u:units){
                     TranslationStateStore.Record r=store.get(u.id,u.sourceHash);
-                    if(r!=null&&!blank(r.translation)){doneMap.put(u.id,r.translation);done++;}
+                    if(r!=null&&!blank(r.translation)&&looksComplete(u,r.translation)){
+                        doneMap.put(u.id,r.translation);done++;
+                    }
                 }
                 listener.onProgress(done,total,0,"Khôi phục draft: "+done+"/"+total);
 
@@ -72,9 +74,7 @@ public final class TranslationJob {
                         int batchNo=completedBatches;
                         for(Unit u:batch){
                             String t=got.get(u.id);
-                            if(blank(t))t=TranslationRouter.translate(u.inner,br.context+" Return only the translated HTML fragment.",providers);
-                            t=clean(t);
-                            if(blank(t))throw new IOException("AI trả về bản dịch rỗng cho unit "+u.id);
+                            t=translateValidatedUnit(u,t,br.context,providers);
                             store.put(new TranslationStateStore.Record(u.id,u.file,u.sourceHash,t));
                             doneMap.put(u.id,t);done++;
                             listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
@@ -110,7 +110,7 @@ public final class TranslationJob {
                 String x=read(zip,e);Matcher m=BLOCK.matcher(x);int ordinal=0;
                 while(m.find()){
                     String tag=m.group(1),attrs=m.group(2),inner=m.group(3);
-                    String plain=strip(inner);boolean tr=shouldTranslate(attrs,plain);
+                    String plain=strip(inner);boolean tr=shouldTranslate(tag,attrs,plain);
                     String sh=TranslationStateStore.sha256(inner);
                     String id=TranslationStateStore.sha256(name+"|"+ordinal+"|"+sh);
                     out.add(new Unit(id,name,ordinal,tag,attrs,inner,sh,tr));ordinal++;
@@ -120,12 +120,23 @@ public final class TranslationJob {
         return out;
     }
 
-    private static boolean shouldTranslate(String attrs,String plain){
+    private static boolean shouldTranslate(String tag,String attrs,String plain){
         if(plain.length()<2||!plain.matches("(?s).*\\p{L}.*"))return false;
         String a=attrs==null?"":attrs.toLowerCase(Locale.US);
         if(a.matches(".*\\b(ref|ref1|reflist|references|bibliography|bib|doi|url|tsource|tsource1|figcredit|fignum)\\b.*"))return false;
         String compact=plain.replaceAll("[^A-Za-z0-9-]","");
-        if(compact.length()<=10&&compact.matches("[A-Za-z][A-Za-z0-9-]+"))return false;
+        String lower=plain.trim().toLowerCase(Locale.US);
+        boolean shortHeading=lower.equals("definition")
+                ||lower.equals("feature")
+                ||lower.equals("renal")
+                ||lower.equals("seizure")
+                ||lower.equals("prenatal")
+                ||lower.equals("classic signs")
+                ||lower.equals("key points")
+                ||lower.equals("references")
+                ||lower.matches("table\\s+129\\.[0-9]+");
+        if(compact.length()<=10&&compact.matches("[A-Za-z][A-Za-z0-9-]+")
+                &&!shortHeading)return false;
         boolean vi=plain.matches("(?s).*?[ÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚĂĐĨŨƠàáâãèéêìíòóôõùúăđĩũơƯưẠ-ỹ].*");
         if(vi&&englishWords(plain)<Math.max(3,vietnameseWords(plain)*2))return false;
         return !plain.matches("[\\s\\d.,:;()\\[\\]/%+-]+");
@@ -136,6 +147,97 @@ public final class TranslationJob {
     }
     private static int vietnameseWords(String s){
         Matcher m=Pattern.compile("[À-ỹĐđ]{2,}").matcher(s);int n=0;while(m.find())n++;return n;
+    }
+
+    private static String translateValidatedUnit(Unit u,String candidate,
+                                                     String context,
+                                                     List<TranslationRouter.Provider> providers)
+            throws Exception{
+        String t=clean(candidate);
+        for(int attempt=0;attempt<3;attempt++){
+            if(looksComplete(u,t))return t;
+
+            StringBuilder prompt=new StringBuilder();
+            prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
+                  .append("Do not omit, summarize, combine away, or invent any sentence. ")
+                  .append("Preserve every HTML/XML tag and attribute exactly. ")
+                  .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
+                  .append("Return ONLY the translated HTML fragment. ")
+                  .append("If the source contains multiple sentences, translate all of them.\\n\\n")
+                  .append(u.inner);
+
+            t=clean(TranslationRouter.translate(prompt.toString(),context,providers));
+        }
+        if(!looksComplete(u,t))
+            throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
+                    +" sau 3 lần thử; app đã dừng để tránh xuất EPUB thiếu nội dung.");
+        return t;
+    }
+
+    private static boolean looksComplete(Unit u,String translation){
+        if(blank(translation))return false;
+        String src=strip(u.inner);
+        String dst=strip(translation);
+        if(src.length()<12)return true;
+
+        // A translation that is drastically shorter than the source is a strong
+        // signal that the model omitted one or more sentences.
+        if(src.length()>=160 && dst.length()<Math.max(45,src.length()*0.38))return false;
+
+        int srcSent=sentenceCount(src);
+        int dstSent=sentenceCount(dst);
+        if(srcSent>=3 && dstSent<srcSent-1)return false;
+        if(srcSent>=2 && dstSent<1)return false;
+
+        // Preserve important numeric/citation tokens. A missing dosage, rate,
+        // gestational age, gene coordinate, etc. is not acceptable.
+        List<String> nums=importantTokens(src);
+        if(!nums.isEmpty()){
+            Map<String,Integer> have=new HashMap<>();
+            for(String x:importantTokens(dst))have.put(x,have.getOrDefault(x,0)+1);
+            Map<String,Integer> need=new HashMap<>();
+            for(String x:nums)need.put(x,need.getOrDefault(x,0)+1);
+            int covered=0,total=0;
+            for(Map.Entry<String,Integer> e:need.entrySet()){
+                total+=e.getValue();
+                covered+=Math.min(e.getValue(),have.getOrDefault(e.getKey(),0));
+            }
+            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))return false;
+        }
+
+        // Reject obvious untranslated UI headings/prose.
+        String low=dst.toLowerCase(Locale.US);
+        if(src.toLowerCase(Locale.US).equals("feature")
+                &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return false;
+        if(src.toLowerCase(Locale.US).equals("renal")
+                &&!low.contains("thận"))return false;
+        if(src.toLowerCase(Locale.US).equals("seizure")
+                &&!low.contains("co giật"))return false;
+        if(src.toLowerCase(Locale.US).equals("prenatal")
+                &&!low.contains("trước sinh"))return false;
+        if(src.toLowerCase(Locale.US).equals("definition")
+                &&!low.contains("định nghĩa"))return false;
+        if(src.toLowerCase(Locale.US).equals("classic signs")
+                &&!low.contains("dấu hiệu"))return false;
+
+        return true;
+    }
+
+    private static int sentenceCount(String s){
+        if(s==null||s.trim().isEmpty())return 0;
+        Matcher m=Pattern.compile("[.!?](?=\\s|$)").matcher(s);
+        int n=0;while(m.find())n++;
+        return Math.max(1,n);
+    }
+
+    private static List<String> importantTokens(String s){
+        List<String> out=new ArrayList<>();
+        if(s==null)return out;
+        Matcher m=Pattern.compile(
+                "(?i)\\b(?:\\d+(?:[.,]\\d+)?(?:–|-|to)\\d+(?:[.,]\\d+)?%?|\\d+(?:[.,]\\d+)?%|\\d+:[0-9]+|[A-Z]{2,}\\d*(?:[.-]\\d+)+)\\b")
+                .matcher(s);
+        while(m.find())out.add(m.group().toLowerCase(Locale.US));
+        return out;
     }
 
     private static List<Unit> makeBatch(List<Unit> p,int start){
