@@ -547,7 +547,11 @@ public class MainActivity extends Activity {
             }
         };
 
+        final boolean[] refreshing={false};
         Runnable refresh=()->{
+            if(refreshing[0])return;
+            refreshing[0]=true;
+            try{
             String p=(String)provider.getSelectedItem();
             String[] ms=modelsFor(p),labels=labelsFor(p);
             int slot=active[0];
@@ -588,6 +592,9 @@ public class MainActivity extends Activity {
             List<TranslationRouter.Provider> ps=savedProfileProviders();
             if(ps.isEmpty())fb.append("chưa có cấu hình hợp lệ");else for(int i=0;i<ps.size();i++){if(i>0)fb.append(" → ");fb.append(ps.get(i).name);}
             fallbackNote.setText(fb.toString());
+            }finally{
+                refreshing[0]=false;
+            }
         };
 
         provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
