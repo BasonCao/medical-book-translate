@@ -13,6 +13,10 @@ import com.tom_roush.pdfbox.contentstream.operator.Operator;
 import com.tom_roush.pdfbox.text.TextPosition;
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle;
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
+import com.tom_roush.pdfbox.pdmodel.PDResources;
+import com.tom_roush.pdfbox.pdmodel.graphics.PDXObject;
+import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import com.tom_roush.pdfbox.cos.COSName;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
 import com.tom_roush.pdfbox.util.Matrix;
 import java.io.*;
@@ -151,18 +155,106 @@ public final class PdfTranslationJob {
                 List<LayoutUnit> units=extractLayoutUnits(doc,i+1);
                 if(units.isEmpty())continue;
                 Map<Integer,String> translated=parseUnitMap(translations.get(i+1),units.size());
-                stripTextOperators(doc,page);
-                float pageHeight=page.getMediaBox().getHeight();
-                try(PDPageContentStream cs=new PDPageContentStream(doc,page,
-                        PDPageContentStream.AppendMode.APPEND,true,true)){
-                    for(int n=0;n<units.size();n++){
-                        String text=translated.get(n);
-                        if(text==null||text.trim().isEmpty())continue;
-                        drawUnit(cs,text,units.get(n),fonts,pageHeight);
+                if(hasTwoColumnLayout(units)){
+                    buildSingleColumnPage(doc,page,units,translated,fonts);
+                }else{
+                    stripTextOperators(doc,page);
+                    float pageHeight=page.getMediaBox().getHeight();
+                    try(PDPageContentStream cs=new PDPageContentStream(doc,page,
+                            PDPageContentStream.AppendMode.APPEND,true,true)){
+                        for(int n=0;n<units.size();n++){
+                            String text=translated.get(n);
+                            if(text==null||text.trim().isEmpty())continue;
+                            drawUnit(cs,text,units.get(n),fonts,pageHeight);
+                        }
                     }
                 }
             }
             doc.save(output);
+        }
+    }
+
+    private static boolean hasTwoColumnLayout(List<LayoutUnit> units){
+        boolean left=false,right=false;
+        for(LayoutUnit u:units){
+            if(u.column==0)left=true;
+            else if(u.column==1)right=true;
+        }
+        return left&&right;
+    }
+
+    private static void buildSingleColumnPage(PDDocument doc,PDPage page,
+                                               List<LayoutUnit> units,
+                                               Map<Integer,String> translated,
+                                               List<FontSlot> fonts)throws IOException{
+        PDResources resources=page.getResources();
+        List<PDImageXObject> images=new ArrayList<>();
+        if(resources!=null){
+            for(COSName name:resources.getXObjectNames()){
+                try{
+                    PDXObject xo=resources.getXObject(name);
+                    if(xo instanceof PDImageXObject)images.add((PDImageXObject)xo);
+                }catch(Exception ignored){}
+            }
+        }
+
+        // Remove the original two-column text/vector layer. Images are retained
+        // from the page resources and redrawn below the translated reading column.
+        page.setContents(new PDStream(doc));
+
+        float pageW=page.getMediaBox().getWidth();
+        float pageH=page.getMediaBox().getHeight();
+        float margin=34f;
+        float maxW=Math.max(100f,pageW-margin*2f);
+        float imageWidth=Math.min(maxW,pageW*0.62f);
+        float imageGap=12f;
+        float totalImageHeight=0f;
+        List<float[]> imageSizes=new ArrayList<>();
+
+        for(PDImageXObject image:images){
+            float ratio=image.getHeight()>0?(float)image.getWidth()/image.getHeight():1f;
+            float w=imageWidth;
+            float h=w/Math.max(0.1f,ratio);
+            imageSizes.add(new float[]{w,h});
+            totalImageHeight+=h+imageGap;
+        }
+
+        float availableTextHeight=Math.max(80f,pageH-margin*2f-totalImageHeight-12f);
+        float size=10f;
+        List<String> flowLines=new ArrayList<>();
+
+        while(size>=5.5f){
+            flowLines.clear();
+            for(int n=0;n<units.size();n++){
+                String text=translated.get(n);
+                if(text==null||text.trim().isEmpty())continue;
+                flowLines.addAll(wrapText(sanitizeForPdf(text).trim(),fonts,size,maxW));
+                flowLines.add("");
+            }
+            if(!flowLines.isEmpty())flowLines.remove(flowLines.size()-1);
+            if(flowLines.size()*size*1.18f<=availableTextHeight)break;
+            size-=0.4f;
+        }
+
+        try(PDPageContentStream cs=new PDPageContentStream(doc,page)){
+            float y=pageH-margin-size;
+            cs.beginText();
+            for(String line:flowLines){
+                if(y<margin+size)break;
+                cs.setTextMatrix(Matrix.getTranslateInstance(margin,y));
+                showTextWithFallback(cs,line,fonts,size);
+                y-=size*1.18f;
+            }
+            cs.endText();
+
+            float imageY=margin;
+            for(int i=0;i<images.size();i++){
+                float[] wh=imageSizes.get(i);
+                if(imageY+wh[1]>pageH-margin)break;
+                float x=(pageW-wh[0])/2f;
+                cs.drawImage(images.get(i),x,imageY,wh[0],wh[1]);
+                imageY+=wh[1]+imageGap;
+            }
         }
     }
 
