@@ -78,6 +78,7 @@ public class MainActivity extends Activity {
         translate.setOnClickListener(v->translate());
         export.setOnClickListener(v->saveOutput());
         pdfLayout.setOnClickListener(v->choosePdfLayoutAndTranslate(fallbackProviders()));
+        updatePdfLayoutButton();
         reset.setOnClickListener(v->resetProgress());
 
         restoreWorkspace();
@@ -179,7 +180,7 @@ public class MainActivity extends Activity {
                 if(pdfMode && temp.length()<5)throw new IOException("File PDF rỗng hoặc không hợp lệ.");
                 String hash=TranslationStateStore.sha256(temp);
                 workspace=new File(new File(getFilesDir(),"translation_workspaces"),hash);
-                if(pdfLayout!=null)pdfLayout.setVisibility(pdfMode?View.VISIBLE:View.GONE);
+                if(pdfLayout!=null){pdfLayout.setVisibility(pdfMode?View.VISIBLE:View.GONE);updatePdfLayoutButton();}
                 if(!workspace.exists()&&!workspace.mkdirs())throw new IOException("Không tạo được translation workspace.");
                 selectedFile=new File(workspace,"source"+ext);
                 copyFile(temp,selectedFile);
@@ -763,6 +764,12 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void updatePdfLayoutButton(){
+        if(pdfLayout==null)return;
+        boolean one=prefsHolder.getInt("pdf_layout_mode",0)==1;
+        pdfLayout.setText(one?"📐 Bố cục PDF: 1 cột":"📐 Bố cục PDF: 2 cột như PDF gốc");
+    }
+
     private void choosePdfLayoutAndTranslate(List<TranslationRouter.Provider> providers){
         String[] choices={
                 "📰 Giữ bố cục 2 cột như PDF gốc",
@@ -776,6 +783,7 @@ public class MainActivity extends Activity {
                 .setMessage("2 cột: giữ hình, bảng và bố cục gần PDF gốc.\n1 cột: dễ đọc hơn nhưng có thể thay đổi vị trí hình/bảng.")
                 .setPositiveButton("DỊCH / TIẾP TỤC",(d,w)->{
                     prefsHolder.edit().putInt("pdf_layout_mode",selected[0]).apply();
+                    updatePdfLayoutButton();
                     translatePdf(providers,selected[0]==1);
                 })
                 .setNegativeButton("HỦY",null).show();
