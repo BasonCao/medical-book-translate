@@ -64,9 +64,9 @@ public final class PdfTranslationJob {
 
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
-                boolean layoutV5="5".equals(state.getProperty("pdf.layout.version",""));
+                boolean layoutV6="6".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
-                    String t=layoutV5?state.getProperty("page."+i,""):"";
+                    String t=layoutV6?state.getProperty("page."+i,""):"";
                     if(!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
@@ -115,7 +115,7 @@ public final class PdfTranslationJob {
                 }
 
                 try{
-                    state.setProperty("pdf.layout.version","5");
+                    state.setProperty("pdf.layout.version","6");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
                         translations.put(result.page,result.text);
@@ -556,13 +556,13 @@ public final class PdfTranslationJob {
         stripper.setSortByPosition(true);
         stripper.setStartPage(pageNumber);stripper.setEndPage(pageNumber);
         stripper.getText(doc);
-        Set<Float> verticalGuides;
+        List<TableRegion> tables;
         try{
-            verticalGuides=collectVerticalGuides(doc.getPage(pageNumber-1));
+            tables=collectTableRegions(doc.getPage(pageNumber-1));
         }catch(Exception ignored){
-            verticalGuides=Collections.emptySet();
+            tables=Collections.emptyList();
         }
-        return stripper.buildUnits(doc.getPage(pageNumber-1).getMediaBox().getWidth(),verticalGuides);
+        return stripper.buildUnits(doc.getPage(pageNumber-1).getMediaBox().getWidth(),tables);
     }
 
     /**
