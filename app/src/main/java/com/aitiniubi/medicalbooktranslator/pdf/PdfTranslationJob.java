@@ -392,7 +392,7 @@ public final class PdfTranslationJob {
         for(int i=0;i<ids.size();i++){
             int id=ids.get(i);if(id<0||id>=count)continue;
             int end=i+1<markerStarts.size()?markerStarts.get(i+1):raw.length();
-            out.put(id,raw.substring(contentStarts.get(i),end).replace("\\\\n","\\n").trim());
+            out.put(id,raw.substring(contentStarts.get(i),end).replace("\\n","\n").trim());
         }
         return out;
     }
