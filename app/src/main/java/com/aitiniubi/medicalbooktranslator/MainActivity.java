@@ -483,198 +483,288 @@ public class MainActivity extends Activity {
         return out;
     }
 
+    /**
+     * Stable AI settings UI.
+     * Avoids dynamic re-parenting and callback recursion: every control is created
+     * once and remains attached to exactly one container.
+     */
     private void settings(){
-        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(24,8,24,8);
+        final LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(24,8,24,8);
 
-        // One-tap AI profiles. Each profile keeps its own provider/model/key.
-        TextView profileTitle=new TextView(this);profileTitle.setText("CẤU HÌNH API — chạm để nạp lại key");
-        profileTitle.setTextSize(15);box.addView(profileTitle);
-        HorizontalScrollView hsv=new HorizontalScrollView(this);
-        LinearLayout profileBar=new LinearLayout(this);profileBar.setOrientation(LinearLayout.HORIZONTAL);
-        hsv.addView(profileBar);box.addView(hsv,new LinearLayout.LayoutParams(-1,-2));
+        TextView profileTitle=new TextView(this);
+        profileTitle.setText("CẤU HÌNH API — chọn cấu hình để nạp lại key");
+        profileTitle.setTextSize(15);
+        root.addView(profileTitle);
 
-        Spinner provider=new Spinner(this);provider.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,PROVIDERS));
-        Spinner model=new Spinner(this);
-        Button refreshGemini=new Button(this);refreshGemini.setText("🔄 LÀM MỚI DANH SÁCH GEMINI MODEL");
-        EditText customModel=new EditText(this);customModel.setHint("Model ID tùy chỉnh");customModel.setSingleLine(true);
-        EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);
-        EditText key=new EditText(this);key.setHint("API key");key.setSingleLine(true);
-        key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
-
-        CheckBox freePool=new CheckBox(this);freePool.setText("FREE AI POOL — dùng các cấu hình Free");
-        freePool.setChecked(prefsHolder.getBoolean(PREF_FREE_POOL,true));
-        CheckBox allowPaid=new CheckBox(this);allowPaid.setText("Cho phép provider trả phí khi free pool hết quota");
-        allowPaid.setChecked(prefsHolder.getBoolean(PREF_ALLOW_PAID,false));
-
-        TextView note=new TextView(this);note.setTextSize(12);note.setPadding(0,8,0,0);
-        TextView fallbackNote=new TextView(this);fallbackNote.setTextSize(12);fallbackNote.setPadding(0,8,0,8);
-        TextView keyLink=new TextView(this);keyLink.setTextSize(14);keyLink.setPadding(0,8,0,8);
-        keyLink.setTextColor(0xff1565c0);keyLink.setPaintFlags(keyLink.getPaintFlags()|8);
-
-        final int[] active={Math.max(1,Math.min(10,prefsHolder.getInt("active_profile",1)))};
-
-        // Migrate the old single-key config into profile 1 once.
-        if(!hasProfile(1)){
-            String legacyProvider=providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT));
-            String legacyKey=providerKey(legacyProvider);
-            String legacyModel=providerModel(legacyProvider);
-            if(!legacyKey.trim().isEmpty()){
-                prefsHolder.edit()
-                        .putString(profileKey(1,"provider"),legacyProvider)
-                        .putString(profileKey(1,"endpoint"),legacyProvider.equals(PROVIDERS[5])?prefsHolder.getString("endpoint_custom",""):"")
-                        .putString(profileKey(1,"model"),legacyModel)
-                        .putString(profileKey(1,"key"),legacyKey).apply();
-            }
+        final Spinner profile=new Spinner(this);
+        String[] profileNames=new String[10];
+        for(int i=0;i<10;i++){
+            String key=prefsHolder.getString(profileKey(i+1,"key"),"");
+            profileNames[i]="Cấu hình "+(i+1)+(key.trim().isEmpty()?" — trống":" — "+maskedKey(key));
         }
+        profile.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,profileNames));
+        int initial=Math.max(0,Math.min(9,prefsHolder.getInt("active_profile",1)-1));
+        profile.setSelection(initial,false);
+        root.addView(profile);
 
-        final Runnable[] updateProfileButtons=new Runnable[1];
-        updateProfileButtons[0]=()->{
-            profileBar.removeAllViews();
-            for(int i=1;i<=10;i++){
-                final int slot=i;
-                Button b=new Button(this);
-                b.setText("Cấu hình "+i+(hasProfile(i)?"\n"+maskedKey(prefsHolder.getString(profileKey(i,"key"),"")):"\n(trống)"));
-                b.setAllCaps(false);
-                b.setOnClickListener(v->{
-                    active[0]=slot;
-                    prefsHolder.edit().putInt("active_profile",slot).apply();
-                    String p=profileProvider(slot);
-                    provider.setSelection(Math.max(0,indexOf(PROVIDERS,p)));
-                    loadProfileFields(slot,p,provider,model,customModel,ep,key,note,keyLink,refreshGemini);
-                    updateProfileButtons[0].run();
-                });
-                profileBar.addView(b,new LinearLayout.LayoutParams(-2,-2));
-            }
-        };
+        final Spinner provider=new Spinner(this);
+        provider.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,PROVIDERS));
+        root.addView(provider);
 
-        final boolean[] refreshing={false};
-        Runnable refresh=()->{
-            if(refreshing[0])return;
-            refreshing[0]=true;
-            try{
-            Object selectedProvider=provider.getSelectedItem();
-            if(selectedProvider==null)return;
-            String p=selectedProvider.toString();
+        final Spinner model=new Spinner(this);
+        root.addView(model);
+
+        final Button refreshGemini=new Button(this);
+        refreshGemini.setText("🔄 LÀM MỚI DANH SÁCH GEMINI MODEL");
+        root.addView(refreshGemini);
+
+        final EditText customModel=new EditText(this);
+        customModel.setSingleLine(true);
+        customModel.setHint("Model ID tùy chỉnh");
+        root.addView(customModel);
+
+        final EditText ep=new EditText(this);
+        ep.setSingleLine(true);
+        ep.setHint("Endpoint");
+        root.addView(ep);
+
+        final EditText key=new EditText(this);
+        key.setSingleLine(true);
+        key.setHint("API key");
+        key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        root.addView(key);
+
+        final TextView keyLink=new TextView(this);
+        keyLink.setTextSize(14);
+        keyLink.setPadding(0,8,0,8);
+        keyLink.setTextColor(0xff1565c0);
+        keyLink.setPaintFlags(keyLink.getPaintFlags()|8);
+        root.addView(keyLink);
+
+        final CheckBox freePool=new CheckBox(this);
+        freePool.setText("FREE AI POOL — dùng các cấu hình Free");
+        freePool.setChecked(prefsHolder.getBoolean(PREF_FREE_POOL,true));
+        root.addView(freePool);
+
+        final CheckBox allowPaid=new CheckBox(this);
+        allowPaid.setText("Cho phép provider trả phí khi free pool hết quota");
+        allowPaid.setChecked(prefsHolder.getBoolean(PREF_ALLOW_PAID,false));
+        root.addView(allowPaid);
+
+        final TextView note=new TextView(this);
+        note.setTextSize(12);
+        note.setPadding(0,8,0,0);
+        root.addView(note);
+
+        final TextView fallbackNote=new TextView(this);
+        fallbackNote.setTextSize(12);
+        fallbackNote.setPadding(0,8,0,8);
+        root.addView(fallbackNote);
+
+        final Button save=new Button(this);
+        save.setText("💾 LƯU CẤU HÌNH");
+        root.addView(save);
+
+        final Button test=new Button(this);
+        test.setText("KIỂM TRA CẤU HÌNH NÀY");
+        root.addView(test);
+
+        final Button clear=new Button(this);
+        clear.setText("🗑 XÓA CẤU HÌNH");
+        root.addView(clear);
+
+        final boolean[] internal={true};
+
+        Runnable showProfile=()->{
+            int slot=profile.getSelectedItemPosition()+1;
+            prefsHolder.edit().putInt("active_profile",slot).apply();
+
+            String p=profileProvider(slot);
+            if(p==null||indexOf(PROVIDERS,p)<0)p=PROVIDERS[0];
+            internal[0]=true;
+            provider.setSelection(indexOf(PROVIDERS,p),false);
+
+            String savedModel=prefsHolder.getString(profileKey(slot,"model"),"");
             String[] ms=modelsFor(p),labels=labelsFor(p);
-            int slot=active[0];
-            String saved=prefsHolder.getString(profileKey(slot,"model"),"");
             model.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
-            int sel=indexOf(ms,saved);if(sel<0)sel=0;model.setSelection(sel);
+            int mi=indexOf(ms,savedModel);
+            if(mi<0)mi=0;
+            model.setSelection(mi,false);
 
+            key.setText(prefsHolder.getString(profileKey(slot,"key"),""));
             if(p.equals(PROVIDERS[0])){
-                ep.setText(OPENROUTER_ENDPOINT);customModel.setVisibility(View.GONE);model.setVisibility(View.VISIBLE);
-                note.setText("OpenRouter: Free/Paid. Mỗi Cấu hình có API key riêng.");
-                keyLink.setText("🔑 OpenRouter API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://openrouter.ai/settings/keys"));
+                ep.setText(OPENROUTER_ENDPOINT);
+                customModel.setVisibility(View.GONE);
+                model.setVisibility(View.VISIBLE);
+                note.setText("OpenRouter: mỗi cấu hình có API key riêng.");
+                keyLink.setText("🔑 OpenRouter API key");
+                keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(v->openUrl("https://openrouter.ai/settings/keys"));
             }else if(p.equals(PROVIDERS[1])){
-                ep.setText(GEMINI_ENDPOINT);customModel.setVisibility(View.GONE);model.setVisibility(View.VISIBLE);
-                note.setText("Gemini: mỗi Cấu hình có thể lưu một API key Free khác nhau.");
-                keyLink.setText("🔑 Gemini API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://aistudio.google.com/apikey"));
+                ep.setText(GEMINI_ENDPOINT);
+                customModel.setVisibility(View.GONE);
+                model.setVisibility(View.VISIBLE);
+                note.setText("Gemini: có thể lưu nhiều API key Free ở các cấu hình khác nhau.");
+                keyLink.setText("🔑 Gemini API key");
+                keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(v->openUrl("https://aistudio.google.com/apikey"));
             }else if(p.equals(PROVIDERS[2])){
-                ep.setText(OPENAI_ENDPOINT);customModel.setVisibility(View.GONE);model.setVisibility(View.VISIBLE);
+                ep.setText(OPENAI_ENDPOINT);
+                customModel.setVisibility(View.GONE);
+                model.setVisibility(View.VISIBLE);
                 note.setText("OpenAI API.");
-                keyLink.setText("🔑 OpenAI API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://platform.openai.com/api-keys"));
+                keyLink.setText("🔑 OpenAI API key");
+                keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(v->openUrl("https://platform.openai.com/api-keys"));
             }else if(p.equals(PROVIDERS[3])){
-                ep.setText(DEEPSEEK_ENDPOINT);customModel.setVisibility(View.GONE);model.setVisibility(View.VISIBLE);
+                ep.setText(DEEPSEEK_ENDPOINT);
+                customModel.setVisibility(View.GONE);
+                model.setVisibility(View.VISIBLE);
                 note.setText("DeepSeek API.");
-                keyLink.setText("🔑 DeepSeek API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://platform.deepseek.com/api_keys"));
+                keyLink.setText("🔑 DeepSeek API key");
+                keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(v->openUrl("https://platform.deepseek.com/api_keys"));
             }else if(p.equals(PROVIDERS[4])){
-                ep.setText(MISTRAL_ENDPOINT);customModel.setVisibility(View.GONE);model.setVisibility(View.VISIBLE);
+                ep.setText(MISTRAL_ENDPOINT);
+                customModel.setVisibility(View.GONE);
+                model.setVisibility(View.VISIBLE);
                 note.setText("Mistral API.");
-                keyLink.setText("🔑 Mistral API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://console.mistral.ai/api-keys/"));
+                keyLink.setText("🔑 Mistral API key");
+                keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(v->openUrl("https://console.mistral.ai/api-keys/"));
             }else{
                 ep.setText(prefsHolder.getString(profileKey(slot,"endpoint"),""));
-                customModel.setText(saved);customModel.setVisibility(View.VISIBLE);model.setVisibility(View.GONE);
+                customModel.setText(savedModel);
+                customModel.setVisibility(View.VISIBLE);
+                model.setVisibility(View.GONE);
                 note.setText("Provider tùy chỉnh: endpoint + model + API key.");
-                keyLink.setText("ℹ️ Custom provider");keyLink.setVisibility(View.VISIBLE);
+                keyLink.setText("ℹ️ Custom provider");
+                keyLink.setVisibility(View.VISIBLE);
+                keyLink.setOnClickListener(null);
             }
-            key.setText(prefsHolder.getString(profileKey(slot,"key"),""));
             refreshGemini.setVisibility(p.equals(PROVIDERS[1])?View.VISIBLE:View.GONE);
 
-            StringBuilder fb=new StringBuilder(freePool.isChecked()?"FREE POOL: ":"ALL PROVIDERS: ");
             List<TranslationRouter.Provider> ps=savedProfileProviders();
-            if(ps.isEmpty())fb.append("chưa có cấu hình hợp lệ");else for(int i=0;i<ps.size();i++){if(i>0)fb.append(" → ");fb.append(ps.get(i).name);}
+            StringBuilder fb=new StringBuilder(freePool.isChecked()?"FREE POOL: ":"ALL PROVIDERS: ");
+            if(ps.isEmpty())fb.append("chưa có cấu hình hợp lệ");
+            else for(int i=0;i<ps.size();i++){if(i>0)fb.append(" → ");fb.append(ps.get(i).name);}
             fallbackNote.setText(fb.toString());
-            }finally{
-                refreshing[0]=false;
-            }
+            internal[0]=false;
         };
 
-        provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
-            public void onItemSelected(AdapterView<?> a,View v,int pos,long id){refresh.run();}
+        profile.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(AdapterView<?> a,View v,int pos,long id){showProfile.run();}
             public void onNothingSelected(AdapterView<?> a){}
         });
-        refreshGemini.setOnClickListener(v->refreshGeminiCatalog(model,note,refresh,key.getText().toString()));
-        freePool.setOnCheckedChangeListener((b,checked)->refresh.run());
-        allowPaid.setOnCheckedChangeListener((b,checked)->refresh.run());
 
-        Button test=new Button(this);test.setText("KIỂM TRA CẤU HÌNH NÀY");
-        test.setOnClickListener(v->{
-            String p=(String)provider.getSelectedItem(),selectedModel;
-            if(p.equals(PROVIDERS[5]))selectedModel=customModel.getText().toString().trim();
-            else{String[] ms=modelsFor(p);int pos=model.getSelectedItemPosition();selectedModel=ms[Math.max(0,Math.min(pos,ms.length-1))];}
-            TranslationConfig tc=new TranslationConfig();tc.endpoint=ep.getText().toString().trim();tc.model=selectedModel;tc.apiKey=key.getText().toString().trim();
-            if(tc.apiKey.isEmpty()){Toast.makeText(this,"API key đang trống.",Toast.LENGTH_SHORT).show();return;}
-            test.setEnabled(false);
-            new Thread(()->{try{
-                String out=OpenAICompatibleTranslator.translate("Translate only: fetal ultrasound","Medical translation connection test.",tc);
-                runOnUiThread(()->{test.setEnabled(true);new AlertDialog.Builder(this).setTitle("Kết nối thành công").setMessage("Cấu hình "+active[0]+"\nProvider: "+p+"\nModel: "+tc.model+"\n\n"+out).setPositiveButton("OK",null).show();});
-            }catch(Exception ex){runOnUiThread(()->{test.setEnabled(true);showError(ex);});}}).start();
+        provider.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(AdapterView<?> a,View v,int pos,long id){
+                if(internal[0])return;
+                String p=PROVIDERS[pos];
+                int slot=profile.getSelectedItemPosition()+1;
+                String saved=prefsHolder.getString(profileKey(slot,"model"),"");
+                String[] ms=modelsFor(p),labels=labelsFor(p);
+                model.setAdapter(new ArrayAdapter<String>(MainActivity.this,android.R.layout.simple_spinner_dropdown_item,labels));
+                int mi=indexOf(ms,saved);if(mi<0)mi=0;model.setSelection(mi,false);
+                if(p.equals(PROVIDERS[0]))ep.setText(OPENROUTER_ENDPOINT);
+                else if(p.equals(PROVIDERS[1]))ep.setText(GEMINI_ENDPOINT);
+                else if(p.equals(PROVIDERS[2]))ep.setText(OPENAI_ENDPOINT);
+                else if(p.equals(PROVIDERS[3]))ep.setText(DEEPSEEK_ENDPOINT);
+                else if(p.equals(PROVIDERS[4]))ep.setText(MISTRAL_ENDPOINT);
+            }
+            public void onNothingSelected(AdapterView<?> a){}
         });
 
-        Button save=new Button(this);save.setText("💾 LƯU CẤU HÌNH "+active[0]);
+        freePool.setOnCheckedChangeListener((b,checked)->{
+            if(!internal[0])showProfile.run();
+        });
+        allowPaid.setOnCheckedChangeListener((b,checked)->{
+            if(!internal[0])showProfile.run();
+        });
+
+        refreshGemini.setOnClickListener(v->refreshGeminiCatalog(model,note,showProfile,key.getText().toString()));
+
         save.setOnClickListener(v->{
-            String p=(String)provider.getSelectedItem(),selectedModel;
+            int slot=profile.getSelectedItemPosition()+1;
+            String p=(String)provider.getSelectedItem();
+            if(p==null||p.trim().isEmpty())p=PROVIDERS[0];
+            String selectedModel;
             if(p.equals(PROVIDERS[5]))selectedModel=customModel.getText().toString().trim();
-            else{String[] ms=modelsFor(p);int pos=model.getSelectedItemPosition();selectedModel=ms[Math.max(0,Math.min(pos,ms.length-1))];}
+            else{
+                String[] ms=modelsFor(p);int pos=model.getSelectedItemPosition();
+                selectedModel=ms.length==0?"":ms[Math.max(0,Math.min(pos,ms.length-1))];
+            }
             String enteredKey=key.getText().toString().trim();
             if(enteredKey.isEmpty()){Toast.makeText(this,"API key đang trống.",Toast.LENGTH_SHORT).show();return;}
-            int slot=active[0];
+            if(selectedModel.isEmpty()){Toast.makeText(this,"Model đang trống.",Toast.LENGTH_SHORT).show();return;}
             prefsHolder.edit()
-                    .putBoolean(PREF_FREE_POOL,freePool.isChecked()).putBoolean(PREF_ALLOW_PAID,allowPaid.isChecked())
+                    .putBoolean(PREF_FREE_POOL,freePool.isChecked())
+                    .putBoolean(PREF_ALLOW_PAID,allowPaid.isChecked())
                     .putString(profileKey(slot,"provider"),p)
                     .putString(profileKey(slot,"endpoint"),p.equals(PROVIDERS[5])?ep.getText().toString().trim():"")
                     .putString(profileKey(slot,"model"),selectedModel)
-                    .putString(profileKey(slot,"key"),enteredKey).apply();
-            updateProfileButtons[0].run();
-            status.setText((freePool.isChecked()?"FREE POOL":"ALL PROVIDERS")+" | Đã lưu Cấu hình "+slot+" | "+p+" / "+selectedModel);
-            Toast.makeText(this,"Đã lưu Cấu hình "+slot+". Chạm nút cấu hình để nạp lại.",Toast.LENGTH_SHORT).show();
-            refresh.run();
+                    .putString(profileKey(slot,"key"),enteredKey)
+                    .apply();
+            profile.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,profileNamesFromPrefs()));
+            profile.setSelection(slot-1,false);
+            status.setText((freePool.isChecked()?"FREE POOL":"ALL PROVIDERS")+" | Đã lưu Cấu hình "+slot);
+            Toast.makeText(this,"Đã lưu Cấu hình "+slot,Toast.LENGTH_SHORT).show();
+            showProfile.run();
         });
 
-        Button clear=new Button(this);clear.setText("🗑 XÓA CẤU HÌNH "+active[0]);
+        test.setOnClickListener(v->{
+            String p=(String)provider.getSelectedItem();
+            if(p==null)p=PROVIDERS[0];
+            String selectedModel;
+            if(p.equals(PROVIDERS[5]))selectedModel=customModel.getText().toString().trim();
+            else{
+                String[] ms=modelsFor(p);int pos=model.getSelectedItemPosition();
+                selectedModel=ms.length==0?"":ms[Math.max(0,Math.min(pos,ms.length-1))];
+            }
+            TranslationConfig tc=new TranslationConfig();
+            tc.endpoint=ep.getText().toString().trim();
+            tc.model=selectedModel;
+            tc.apiKey=key.getText().toString().trim();
+            if(tc.apiKey.isEmpty()){Toast.makeText(this,"API key đang trống.",Toast.LENGTH_SHORT).show();return;}
+            test.setEnabled(false);
+            final String providerName=p;
+            new Thread(()->{try{
+                String out=OpenAICompatibleTranslator.translate("Translate only: fetal ultrasound","Medical translation connection test.",tc);
+                runOnUiThread(()->{
+                    test.setEnabled(true);
+                    new AlertDialog.Builder(this).setTitle("Kết nối thành công")
+                            .setMessage("Cấu hình "+profile.getSelectedItemPosition()+1+"\nProvider: "+providerName+"\nModel: "+tc.model+"\n\n"+out)
+                            .setPositiveButton("OK",null).show();
+                });
+            }catch(Exception ex){runOnUiThread(()->{test.setEnabled(true);showError(ex);});}}).start();
+        });
+
         clear.setOnClickListener(v->{
-            int slot=active[0];
+            int slot=profile.getSelectedItemPosition()+1;
             new AlertDialog.Builder(this).setTitle("Xóa Cấu hình "+slot+"?")
                     .setMessage("API key và model của cấu hình này sẽ bị xóa khỏi máy.")
                     .setPositiveButton("Xóa",(d,w)->{
                         prefsHolder.edit().remove(profileKey(slot,"provider")).remove(profileKey(slot,"endpoint"))
                                 .remove(profileKey(slot,"model")).remove(profileKey(slot,"key")).apply();
-                        loadProfileFields(slot,PROVIDERS[0],provider,model,customModel,ep,key,note,keyLink,refreshGemini);
-                        updateProfileButtons[0].run();refresh.run();
+                        showProfile.run();
                     }).setNegativeButton("Hủy",null).show();
         });
 
-        box.addView(freePool);box.addView(allowPaid);box.addView(profileTitle);box.addView(hsv);
-        box.addView(provider);box.addView(model);box.addView(refreshGemini);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);
-        box.addView(save);box.addView(test);box.addView(clear);box.addView(note);box.addView(fallbackNote);
+        new AlertDialog.Builder(this).setTitle("Cấu hình AI + Failover")
+                .setView(root).setNegativeButton("Đóng",null).show();
 
-        updateProfileButtons[0].run();
-        int initial=active[0];String ip=profileProvider(initial);
-        provider.setSelection(Math.max(0,indexOf(PROVIDERS,ip)));
-        refresh.run();
-
-        new AlertDialog.Builder(this).setTitle("Cấu hình AI + Failover").setView(box)
-                .setNegativeButton("Đóng",null).show();
+        root.post(showProfile);
     }
 
-    private void loadProfileFields(int slot,String p,Spinner provider,Spinner model,EditText customModel,
-                                   EditText ep,EditText key,TextView note,TextView keyLink,Button refreshGemini){
-        provider.setSelection(Math.max(0,indexOf(PROVIDERS,p)));
-        String saved=prefsHolder.getString(profileKey(slot,"model"),"");
-        key.setText(prefsHolder.getString(profileKey(slot,"key"),""));
-        if(p.equals(PROVIDERS[5]))customModel.setText(saved);
-        ep.setText(p.equals(PROVIDERS[5])?prefsHolder.getString(profileKey(slot,"endpoint"),""):"");
-        refreshGemini.setVisibility(p.equals(PROVIDERS[1])?View.VISIBLE:View.GONE);
+    private String[] profileNamesFromPrefs(){
+        String[] out=new String[10];
+        for(int i=0;i<10;i++){
+            String key=prefsHolder.getString(profileKey(i+1,"key"),"");
+            out[i]="Cấu hình "+(i+1)+(key.trim().isEmpty()?" — trống":" — "+maskedKey(key));
+        }
+        return out;
     }
 
     private void translate(){
