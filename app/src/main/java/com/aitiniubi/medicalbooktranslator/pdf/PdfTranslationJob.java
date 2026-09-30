@@ -64,9 +64,9 @@ public final class PdfTranslationJob {
 
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
-                boolean layoutV6="6".equals(state.getProperty("pdf.layout.version",""));
+                boolean layoutV7="7".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
-                    String t=layoutV6?state.getProperty("page."+i,""):"";
+                    String t=layoutV7?state.getProperty("page."+i,""):"";
                     if(!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
@@ -115,7 +115,7 @@ public final class PdfTranslationJob {
                 }
 
                 try{
-                    state.setProperty("pdf.layout.version","6");
+                    state.setProperty("pdf.layout.version","7");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
                         translations.put(result.page,result.text);
@@ -194,9 +194,10 @@ public final class PdfTranslationJob {
             for(int n=0;n<units.size();n++){
                 String text=translated.get(n);
                 if(text==null||text.trim().isEmpty())continue;
-                if(drawTableCellIfNeeded(cs,text,units.get(n),fonts,pageHeight,tables))
+                LayoutUnit unit=units.get(n);
+                if(drawTableCellIfNeeded(cs,text,unit,fonts,pageHeight,tables))
                     continue;
-                drawUnit(cs,text,units.get(n),fonts,pageHeight);
+                drawUnitClipped(cs,text,unit,fonts,pageHeight);
             }
         }
     }
@@ -568,6 +569,71 @@ public final class PdfTranslationJob {
         return true;
     }
 
+    private static void drawUnitClipped(PDPageContentStream cs,String text,
+                                         LayoutUnit unit,List<FontSlot> fonts,
+                                         float pageHeight)throws IOException{
+        String clean=sanitizeForPdf(text).trim();
+        if(clean.isEmpty())return;
+
+        float maxWidth=Math.max(10f,unit.width-2f);
+        float maxHeight=Math.max(10f,unit.height);
+        float size=Math.max(5.5f,Math.min(18f,unit.fontSize));
+        List<String> lines;
+        while(true){
+            lines=wrapTextHard(clean,fonts,size,maxWidth);
+            float leading=size*1.16f;
+            if(lines.size()*leading<=maxHeight||size<=5.5f)break;
+            size=Math.max(5.5f,size-0.35f);
+        }
+
+        cs.saveGraphicsState();
+        try{
+            // Clip to the original visual text block. This is the final guard
+            // against translated text expanding into an adjacent image.
+            float clipX=unit.x;
+            float clipY=pageHeight-(unit.y+unit.height);
+            cs.addRect(clipX,clipY,Math.max(1f,unit.width),Math.max(1f,unit.height));
+            cs.clip();
+            cs.beginText();
+            cs.setFont(fonts.get(0).font,size);
+            float leading=size*1.16f;
+            for(int i=0;i<lines.size();i++){
+                float y=pageHeight-(unit.y+i*leading)-size*0.84f;
+                if(y<clipY)y=clipY;
+                cs.setTextMatrix(Matrix.getTranslateInstance(unit.x,y));
+                showTextWithFallback(cs,lines.get(i),fonts,size);
+            }
+            cs.endText();
+        }finally{
+            cs.restoreGraphicsState();
+        }
+    }
+
+    private static List<String> wrapTextHard(String text,List<FontSlot> fonts,
+                                              float size,float maxWidth)throws IOException{
+        List<String> out=new ArrayList<>();
+        for(String paragraph:text.replace("\\r","").split("\\n+")){
+            String p=paragraph.trim();
+            if(p.isEmpty()){out.add("");continue;}
+            StringBuilder line=new StringBuilder();
+            for(int i=0;i<p.length();){
+                int cp=p.codePointAt(i);
+                int next=i+Character.charCount(cp);
+                String token=new String(Character.toChars(cp));
+                String candidate=line.length()==0?token:line+" "+token;
+                if(line.length()>0&&measureWidth(candidate,fonts,size)>maxWidth){
+                    out.add(line.toString());
+                    line=new StringBuilder(token);
+                }else{
+                    line.appendCodePoint(cp);
+                }
+                i=next;
+            }
+            if(line.length()>0)out.add(line.toString());
+        }
+        return out;
+    }
+
     private static void drawUnit(PDPageContentStream cs,String text,LayoutUnit unit,
                                  List<FontSlot> fonts,float pageHeight)throws IOException{
         String clean=sanitizeForPdf(text).trim();
@@ -625,13 +691,24 @@ public final class PdfTranslationJob {
         stripper.setSortByPosition(true);
         stripper.setStartPage(pageNumber);stripper.setEndPage(pageNumber);
         stripper.getText(doc);
-        List<TableRegion> tables;
-        try{
-            tables=collectTableRegions(doc.getPage(pageNumber-1));
-        }catch(Exception ignored){
-            tables=Collections.emptyList();
+        List<TableRegion> tables=new ArrayList<>();
+        try{tables.addAll(collectTableRegions(doc.getPage(pageNumber-1)));}
+        catch(Exception ignored){}
+        List<TableRegion> inferred=stripper.inferTextTables(
+                doc.getPage(pageNumber-1).getMediaBox().getWidth());
+        for(TableRegion t:inferred){
+            boolean duplicate=false;
+            for(TableRegion existing:tables){
+                if(Math.abs(existing.x0-t.x0)<12f
+                        &&Math.abs(existing.x1-t.x1)<12f
+                        &&Math.abs(existing.top-t.top)<12f){
+                    duplicate=true;break;
+                }
+            }
+            if(!duplicate)tables.add(t);
         }
-        return stripper.buildUnits(doc.getPage(pageNumber-1).getMediaBox().getWidth(),tables);
+        return stripper.buildUnits(
+                doc.getPage(pageNumber-1).getMediaBox().getWidth(),tables);
     }
 
     /**
@@ -985,6 +1062,7 @@ public final class PdfTranslationJob {
 
         List<LayoutLine> buildLines(float pageWidth,List<TableRegion> tables){
             List<LayoutLine> out=new ArrayList<>();
+            Set<Float> textTableDividers=inferTableDividerXs(pageWidth);
             List<TextPosition> sorted=new ArrayList<>(glyphs);
             Collections.sort(sorted,(a,b)->{
                 int y=Float.compare(a.getY(),b.getY());
@@ -1035,6 +1113,15 @@ public final class PdfTranslationJob {
                                 if(crossesVerticalGuide)break;
                             }
                         }
+                        if(!crossesVerticalGuide){
+                            for(Float g:textTableDividers){
+                                if(g!=null&&g>pieceLeft+0.5f&&g<p.getX()-0.5f
+                                        &&Math.abs(g-(prev.getX()+prev.getWidth()))>0.5f){
+                                    crossesVerticalGuide=true;
+                                    break;
+                                }
+                            }
+                        }
 
                         float threshold=Math.max(42f,prev.getFontSizeInPt()*3.5f);
                         if((gap>threshold||crossesTwoColumns||crossesVerticalGuide)&&!piece.isEmpty()){
@@ -1053,6 +1140,112 @@ public final class PdfTranslationJob {
                 return y!=0?y:Float.compare(a.x,b.x);
             });
             return out;
+        }
+
+        /**
+         * Infer a table divider from repeated large horizontal gaps between
+         * text clusters. This is the fallback for tables embedded in Form
+         * XObjects, where PDFGraphicsStreamEngine on the page cannot see the
+         * divider vector.
+         */
+        private Set<Float> inferTableDividerXs(float pageWidth){
+            List<List<TextPosition>> rows=makeRows();
+            Map<Float,Integer> counts=new HashMap<>();
+            for(List<TextPosition> row:rows){
+                if(row.size()<2)continue;
+                Collections.sort(row,Comparator.comparing(TextPosition::getX));
+                for(int i=1;i<row.size();i++){
+                    TextPosition a=row.get(i-1), b=row.get(i);
+                    float gap=b.getX()-(a.getX()+a.getWidth());
+                    float x=(a.getX()+a.getWidth()+b.getX())*0.5f;
+                    if(gap>=18f && x>pageWidth*0.10f && x<pageWidth*0.90f
+                            && !(a.getX()+a.getWidth()<pageWidth*0.49f
+                                 && b.getX()>pageWidth*0.51f)){
+                        Float hit=null;
+                        for(Float g:counts.keySet()){
+                            if(Math.abs(g-x)<=7f){hit=g;break;}
+                        }
+                        if(hit==null)counts.put(x,1);
+                        else{
+                            int n=counts.remove(hit);
+                            counts.put((hit+x)*0.5f,n+1);
+                        }
+                    }
+                }
+            }
+            Set<Float> result=new HashSet<>();
+            for(Map.Entry<Float,Integer> e:counts.entrySet()){
+                if(e.getValue()>=4)result.add(e.getKey());
+            }
+            return result;
+        }
+
+        List<TableRegion> inferTextTables(float pageWidth){
+            Set<Float> dividers=inferTableDividerXs(pageWidth);
+            if(dividers.isEmpty())return Collections.emptyList();
+
+            List<List<TextPosition>> rows=makeRows();
+            List<Float> ys=new ArrayList<>();
+            float xMin=Float.MAX_VALUE,xMax=0;
+            for(List<TextPosition> row:rows){
+                if(row.isEmpty())continue;
+                boolean nearDivider=false;
+                float min=row.get(0).getX();
+                float max=row.get(row.size()-1).getX()+row.get(row.size()-1).getWidth();
+                for(Float d:dividers){
+                    if(d>min+8f&&d<max-8f){nearDivider=true;break;}
+                }
+                if(nearDivider){
+                    ys.add(row.get(0).getY());
+                    xMin=Math.min(xMin,min);
+                    xMax=Math.max(xMax,max);
+                }
+            }
+            if(ys.size()<4)return Collections.emptyList();
+
+            Collections.sort(ys);
+            float top=ys.get(0)-3f;
+            float bottom=ys.get(ys.size()-1)+12f;
+
+            List<Float> vs=new ArrayList<>();
+            vs.add(xMin-2f);
+            for(Float d:dividers)vs.add(d);
+            vs.add(xMax+2f);
+            vs=uniqueFloats(vs,2f);
+
+            List<Float> hs=new ArrayList<>();
+            // Text-derived rows do not need exact horizontal rules. The vector
+            // table renderer will use these coarse row boundaries; actual text
+            // units remain individually split by the same divider.
+            for(Float y:ys)hs.add(y);
+            hs=uniqueFloats(hs,5f);
+            if(vs.size()<3)return Collections.emptyList();
+            return Collections.singletonList(
+                    new TableRegion(vs.get(0),vs.get(vs.size()-1),
+                            top,bottom,vs,hs));
+        }
+
+        private List<List<TextPosition>> makeRows(){
+            List<TextPosition> sorted=new ArrayList<>(glyphs);
+            Collections.sort(sorted,(a,b)->{
+                int y=Float.compare(a.getY(),b.getY());
+                if(y!=0)return y;
+                return Float.compare(a.getX(),b.getX());
+            });
+            List<List<TextPosition>> rows=new ArrayList<>();
+            for(TextPosition p:sorted){
+                float tol=Math.max(2f,p.getFontSizeInPt()*0.28f);
+                List<TextPosition> row=null;
+                for(int i=rows.size()-1;i>=0;i--){
+                    List<TextPosition> r=rows.get(i);
+                    float ry=r.get(0).getY();
+                    if(p.getY()-ry>tol+2f)break;
+                    if(Math.abs(p.getY()-ry)<=tol){row=r;break;}
+                }
+                if(row==null){row=new ArrayList<>();rows.add(row);}
+                row.add(p);
+            }
+            return rows;
         }
 
         private void addLine(List<LayoutLine> out,List<TextPosition> piece){
