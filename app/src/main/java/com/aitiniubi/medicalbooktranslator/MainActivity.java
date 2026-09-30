@@ -288,19 +288,17 @@ public class MainActivity extends Activity {
     }
 
     private List<TranslationRouter.Provider> fallbackProviders(){
-        boolean freeOnly=prefsHolder.getBoolean(PREF_FREE_POOL,true);
-        boolean allowPaid=prefsHolder.getBoolean(PREF_ALLOW_PAID,false);
+        List<TranslationRouter.Provider> profiles=savedProfileProviders();
+        if(!profiles.isEmpty())return profiles;
+        boolean freeOnly=prefsHolder.getBoolean(PREF_FREE_POOL,true),allowPaid=prefsHolder.getBoolean(PREF_ALLOW_PAID,false);
         String selected=providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT));
-        String[] order=freeOnly
-                ? new String[]{selected,PROVIDERS[0],PROVIDERS[1],allowPaid?PROVIDERS[2]:"",allowPaid?PROVIDERS[3]:"",allowPaid?PROVIDERS[4]:"",allowPaid?PROVIDERS[5]:""}
-                : new String[]{selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3],PROVIDERS[4],PROVIDERS[5]};
+        String[] order=freeOnly?new String[]{selected,PROVIDERS[0],PROVIDERS[1],allowPaid?PROVIDERS[2]:"",allowPaid?PROVIDERS[3]:"",allowPaid?PROVIDERS[4]:"",allowPaid?PROVIDERS[5]:""}:new String[]{selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3],PROVIDERS[4],PROVIDERS[5]};
         List<TranslationRouter.Provider> out=new ArrayList<>();HashSet<String> seen=new HashSet<>();
         for(String p:order){
             if(p==null||p.isEmpty()||!seen.add(p))continue;
             if(freeOnly&&!isFreePoolProvider(p)&&!allowPaid)continue;
             TranslationConfig cfg=makeProviderConfig(p);
-            if(cfg.endpoint!=null&&!cfg.endpoint.trim().isEmpty()&&cfg.model!=null&&!cfg.model.trim().isEmpty()&&cfg.apiKey!=null&&!cfg.apiKey.trim().isEmpty())
-                out.add(new TranslationRouter.Provider(p,cfg));
+            if(cfg.endpoint!=null&&!cfg.endpoint.trim().isEmpty()&&cfg.model!=null&&!cfg.model.trim().isEmpty()&&cfg.apiKey!=null&&!cfg.apiKey.trim().isEmpty())out.add(new TranslationRouter.Provider(p,cfg));
         }
         return out;
     }
@@ -356,32 +354,70 @@ public class MainActivity extends Activity {
         if(workspace==null){
             new AlertDialog.Builder(this).setTitle("Thuật ngữ chuyên ngành")
                     .setMessage("Hãy chọn EPUB/PDF trước để tạo workspace cho glossary.")
-                    .setPositiveButton("OK",null).show(); return;
+                    .setPositiveButton("OK",null).show();return;
         }
         List<GlossaryManager.Term> terms=GlossaryManager.load(workspace);
-        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(32,8,32,8);
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(20,4,20,4);
         TextView info=new TextView(this);
-        info.setText("Glossary hiện tại: "+terms.size()+" thuật ngữ\\n\\nCSV mẫu gồm: English,Vietnamese,Category,Note\\nVí dụ: nuchal translucency,độ mờ da gáy,Ultrasound,NT");
-        info.setPadding(0,0,0,16);
-        Button importBtn=new Button(this);importBtn.setText("📥 NẠP CSV THUẬT NGỮ");
-        Button viewBtn=new Button(this);viewBtn.setText("🔎 XEM THUẬT NGỮ");
-        box.addView(info);box.addView(importBtn);box.addView(viewBtn);
-        AlertDialog dlg=new AlertDialog.Builder(this).setTitle("📚 Thuật ngữ chuyên ngành").setView(box).setNegativeButton("Đóng",null).create();
-        importBtn.setOnClickListener(v->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("text/*");i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"text/csv","text/comma-separated-values","application/csv","text/plain"});i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,12);dlg.dismiss();});
-        viewBtn.setOnClickListener(v->{
-            List<GlossaryManager.Term> now=GlossaryManager.load(workspace);StringBuilder s=new StringBuilder();
-            for(int i=0;i<now.size()&&i<200;i++)s.append(now.get(i).english).append(" → ").append(now.get(i).vietnamese).append("\\n");
-            if(now.size()>200)s.append("\\n... còn ").append(now.size()-200).append(" thuật ngữ");
-            new AlertDialog.Builder(this).setTitle("Glossary ("+now.size()+")").setMessage(s.length()==0?"Chưa có thuật ngữ.":s.toString()).setPositiveButton("OK",null).show();
+        info.setText("Tổng "+terms.size()+" thuật ngữ. Có thể sửa trực tiếp hoặc nạp thêm CSV. CSV mới không ghi đè thuật ngữ cũ; English trùng sẽ được bỏ qua.");
+        root.addView(info);
+        LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);
+        Button add=new Button(this);add.setText("➕ THÊM");
+        Button imp=new Button(this);imp.setText("📥 NẠP THÊM CSV");
+        actions.addView(add,new LinearLayout.LayoutParams(0,-2,1));actions.addView(imp,new LinearLayout.LayoutParams(0,-2,1));root.addView(actions);
+        ScrollView sv=new ScrollView(this);LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);
+        for(GlossaryManager.Term t:terms){
+            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(0,8,0,8);
+            EditText en=new EditText(this);en.setSingleLine(true);en.setText(t.english);en.setHint("English");
+            EditText vi=new EditText(this);vi.setSingleLine(true);vi.setText(t.vietnamese);vi.setHint("Vietnamese");
+            EditText ca=new EditText(this);ca.setSingleLine(true);ca.setText(t.category);ca.setHint("Category");
+            EditText no=new EditText(this);no.setSingleLine(true);no.setText(t.note);no.setHint("Note");
+            row.addView(en);row.addView(vi);row.addView(ca);row.addView(no);list.addView(row);
+        }
+        sv.addView(list);root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
+        AlertDialog dlg=new AlertDialog.Builder(this).setTitle("📚 Trung tâm thuật ngữ ("+terms.size()+")")
+                .setView(root).setNegativeButton("Đóng",null).setPositiveButton("💾 LƯU",null).create();
+        add.setOnClickListener(v->{
+            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(0,8,0,8);
+            EditText en=new EditText(this);en.setSingleLine(true);en.setHint("English *");
+            EditText vi=new EditText(this);vi.setSingleLine(true);vi.setHint("Vietnamese *");
+            EditText ca=new EditText(this);ca.setSingleLine(true);ca.setHint("Category");
+            EditText no=new EditText(this);no.setSingleLine(true);no.setHint("Note");
+            row.addView(en);row.addView(vi);row.addView(ca);row.addView(no);list.addView(row);sv.post(()->sv.fullScroll(View.FOCUS_DOWN));
+        });
+        imp.setOnClickListener(v->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("text/*");i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"text/csv","text/comma-separated-values","application/csv","text/plain"});i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,12);dlg.dismiss();});
+        dlg.setOnShowListener(x->dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            ArrayList<GlossaryManager.Term> edited=new ArrayList<>();HashSet<String> seen=new HashSet<>();
+            for(int i=0;i<list.getChildCount();i++){
+                View q=list.getChildAt(i);if(!(q instanceof LinearLayout))continue;LinearLayout row=(LinearLayout)q;if(row.getChildCount()<4)continue;
+                String en=((EditText)row.getChildAt(0)).getText().toString().trim(),vi=((EditText)row.getChildAt(1)).getText().toString().trim();
+                if(en.isEmpty()||vi.isEmpty())continue;String k=en.toLowerCase(Locale.US);if(!seen.add(k))continue;
+                edited.add(new GlossaryManager.Term(en,vi,((EditText)row.getChildAt(2)).getText().toString().trim(),((EditText)row.getChildAt(3)).getText().toString().trim()));
+            }
+            try{GlossaryManager.save(workspace,edited);Toast.makeText(this,"Đã lưu "+edited.size()+" thuật ngữ.",Toast.LENGTH_LONG).show();report.setText("📚 Glossary: "+edited.size()+" thuật ngữ.");dlg.dismiss();}
+            catch(Exception e){showError(e);}
         });
         dlg.show();
     }
 
     private void settings(){
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(40,10,40,10);
+        Spinner profile=new Spinner(this);
+        String[] profileNames=new String[10];for(int i=0;i<10;i++)profileNames[i]="Cấu hình "+(i+1)+(hasProfile(i+1)?" — "+maskedKey(prefsHolder.getString(profileKey(i+1,"key"),"")):" — trống");
+        profile.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,profileNames));
+        profile.setSelection(Math.max(0,Math.min(9,prefsHolder.getInt("active_profile",1)-1)));
         Spinner provider=new Spinner(this);provider.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,PROVIDERS));
         provider.setSelection(Math.max(0,indexOf(PROVIDERS,providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT)))));
-        Spinner model=new Spinner(this);
+        Spinner model=new Spinner(this); 
+        profile.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(AdapterView<?> a,View v,int p,long id){
+                prefsHolder.edit().putInt("active_profile",p+1).apply();
+                String sp=profileProvider(p+1);provider.setSelection(Math.max(0,indexOf(PROVIDERS,sp)));
+                key.setText(prefsHolder.getString(profileKey(p+1,"key"),""));
+            }
+            public void onNothingSelected(AdapterView<?> a){}
+        });
+
         Button refreshGemini=new Button(this);refreshGemini.setText("🔄 Làm mới danh sách Gemini model");
         EditText customModel=new EditText(this);customModel.setHint("Model ID tùy chỉnh");customModel.setSingleLine(true);
         EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);
@@ -406,7 +442,7 @@ public class MainActivity extends Activity {
             else{ep.setText(prefsHolder.getString("endpoint_custom",""));customModel.setText(providerModel(PROVIDERS[5]));customModel.setVisibility(View.VISIBLE);note.setText("Provider tùy chỉnh: nhập endpoint, model và API key.");}
             String saved=providerModel(p);model.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
             int sel=indexOf(ms,saved);if(sel<0)sel=0;model.setSelection(sel);model.setVisibility(p.equals(PROVIDERS[5])?View.GONE:View.VISIBLE);
-            key.setText(providerKey(p));
+            key.setText(prefsHolder.getString(profileKey(profile.getSelectedItemPosition()+1,"key"),""));
             if(p.equals(PROVIDERS[0])){keyLink.setText("🔑 OpenRouter API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://openrouter.ai/settings/keys"));}
             else if(p.equals(PROVIDERS[1])){keyLink.setText("🔑 Gemini API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://aistudio.google.com/apikey"));}
             else if(p.equals(PROVIDERS[2])){keyLink.setText("🔑 OpenAI API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://platform.openai.com/api-keys"));}
@@ -435,22 +471,20 @@ public class MainActivity extends Activity {
             }catch(Exception ex){runOnUiThread(()->{test.setEnabled(true);showError(ex);});}}).start();
         });
 
-        box.addView(freePool);box.addView(allowPaid);box.addView(provider);box.addView(model);box.addView(refreshGemini);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);box.addView(test);box.addView(note);box.addView(fallbackNote);
+        box.addView(profile);box.addView(freePool);box.addView(allowPaid);box.addView(provider);box.addView(model);box.addView(refreshGemini);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);box.addView(test);box.addView(note);box.addView(fallbackNote);
         new AlertDialog.Builder(this).setTitle("Cấu hình AI + Failover").setView(box).setPositiveButton("Lưu",(d,w)->{
             String p=(String)provider.getSelectedItem(),selectedModel;
             if(p.equals(PROVIDERS[5]))selectedModel=customModel.getText().toString().trim();
             else{String[] ms=modelsFor(p);int pos=model.getSelectedItemPosition();selectedModel=ms[Math.max(0,Math.min(pos,ms.length-1))];}
-            String enteredKey=key.getText().toString();
-            android.content.SharedPreferences.Editor e=prefsHolder.edit();
-            e.putBoolean(PREF_FREE_POOL,freePool.isChecked()).putBoolean(PREF_ALLOW_PAID,allowPaid.isChecked());
-            e.putString("apiKey",enteredKey).putString("endpoint",ep.getText().toString().trim()).putString("model",selectedModel);
-            if(p.equals(PROVIDERS[0]))e.putString(PREF_OR_KEY,enteredKey).putString("model_openrouter",selectedModel);
-            else if(p.equals(PROVIDERS[1]))e.putString(PREF_GEMINI_KEY,enteredKey).putString("model_gemini",selectedModel);
-            else if(p.equals(PROVIDERS[2]))e.putString(PREF_OPENAI_KEY,enteredKey).putString("model_openai",selectedModel);
-            else if(p.equals(PROVIDERS[3]))e.putString(PREF_DEEPSEEK_KEY,enteredKey).putString("model_deepseek",selectedModel);
-            else if(p.equals(PROVIDERS[4]))e.putString(PREF_MISTRAL_KEY,enteredKey).putString("model_mistral",selectedModel);
-            else e.putString(PREF_CUSTOM_KEY,enteredKey).putString("endpoint_custom",ep.getText().toString().trim()).putString("model_custom",selectedModel);
-            e.apply();status.setText((freePool.isChecked()?"FREE POOL":"ALL PROVIDERS")+" | AI: "+p+" / "+selectedModel+" | Failover: "+fallbackProviders().size()+" provider");
+            String enteredKey=key.getText().toString().trim();
+            if(enteredKey.isEmpty()){Toast.makeText(this,"API key đang trống.",Toast.LENGTH_SHORT).show();return;}
+            int slot=profile.getSelectedItemPosition()+1;
+            prefsHolder.edit()
+                    .putBoolean(PREF_FREE_POOL,freePool.isChecked()).putBoolean(PREF_ALLOW_PAID,allowPaid.isChecked())
+                    .putString(profileKey(slot,"provider"),p).putString(profileKey(slot,"endpoint"),ep.getText().toString().trim())
+                    .putString(profileKey(slot,"model"),selectedModel).putString(profileKey(slot,"key"),enteredKey).apply();
+            status.setText((freePool.isChecked()?"FREE POOL":"ALL PROVIDERS")+" | Đã lưu Cấu hình "+slot+" | "+p+" / "+selectedModel);
+            Toast.makeText(this,"Đã lưu Cấu hình "+slot,Toast.LENGTH_SHORT).show();
         }).setNegativeButton("Hủy",null).show();
     }
 
