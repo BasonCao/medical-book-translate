@@ -16,6 +16,7 @@ public final class GlossaryManager {
     public static List<Term> load(File workspace){
         List<Term> out=new ArrayList<>(); File f=file(workspace);
         if(!f.isFile())return out;
+        int count=0;
         try(BufferedReader r=new BufferedReader(new InputStreamReader(new FileInputStream(f),StandardCharsets.UTF_8))){
             String line; boolean first=true;
             while((line=r.readLine())!=null){
@@ -35,7 +36,7 @@ public final class GlossaryManager {
         File target=file(workspace),tmp=new File(workspace,"medical-glossary.tmp");
         try(BufferedReader r=new BufferedReader(new InputStreamReader(input,StandardCharsets.UTF_8));
             BufferedWriter w=new BufferedWriter(new OutputStreamWriter(new FileOutputStream(tmp),StandardCharsets.UTF_8))){
-            String line;boolean first=true;int count=0;
+            String line;boolean first=true;
             while((line=r.readLine())!=null){
                 if(first){first=false;if(line.startsWith("\uFEFF"))line=line.substring(1);}
                 if(line.trim().isEmpty())continue;
