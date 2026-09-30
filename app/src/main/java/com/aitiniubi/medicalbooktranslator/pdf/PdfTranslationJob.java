@@ -782,19 +782,67 @@ public final class PdfTranslationJob {
     }
 
 
+    /**
+     * Remove text-showing operators while preserving graphics-state changes.
+     *
+     * Important for publisher PDFs: color operators such as
+     *   /CS0 cs 1 scn
+     * are sometimes placed inside a BT...ET text object immediately before
+     * a vector table is painted. BT/ET do NOT save/restore the graphics state,
+     * so deleting every token inside BT...ET also deletes the table's color
+     * state and makes the following fill render black. We therefore remove
+     * text-state/text-showing operators but retain graphics-state operators
+     * (colors, line width, clipping, q/Q, gs, paths, images, etc.).
+     */
     private static List<Object> filterNonTextTokens(List<Object> tokens){
         List<Object> kept=new ArrayList<>();
         boolean inText=false;
         for(Object token:tokens){
-            if(token instanceof Operator){
-                String name=((Operator)token).getName();
-                if("BT".equals(name)){inText=true;continue;}
-                if("ET".equals(name)){inText=false;continue;}
-                if(inText)continue;
-            }else if(inText)continue;
+            if(!(token instanceof Operator)){
+                // Text operands are only meaningful when followed by a text
+                // operator. Keeping non-operator operands inside BT/ET would
+                // leave invalid/orphan tokens, so discard them.
+                if(!inText)kept.add(token);
+                continue;
+            }
+
+            String name=((Operator)token).getName();
+
+            if("BT".equals(name)){
+                inText=true;
+                continue;
+            }
+            if("ET".equals(name)){
+                inText=false;
+                continue;
+            }
+
+            if(inText && isTextOnlyOperator(name)){
+                // Remove text positioning/state and text-showing operators.
+                // Graphics-state operators are intentionally preserved.
+                continue;
+            }
+
             kept.add(token);
         }
         return kept;
+    }
+
+    private static boolean isTextOnlyOperator(String name){
+        // Text state operators
+        if("Tc".equals(name)||"Tw".equals(name)||"Tz".equals(name)
+                ||"TL".equals(name)||"Tf".equals(name)||"Tr".equals(name)
+                ||"Ts".equals(name))return true;
+
+        // Text positioning operators
+        if("Td".equals(name)||"TD".equals(name)||"Tm".equals(name)
+                ||"T*".equals(name))return true;
+
+        // Text showing operators
+        if("Tj".equals(name)||"TJ".equals(name)
+                ||"'".equals(name)||"\\\"".equals(name))return true;
+
+        return false;
     }
 
     private static void rewritePageWithoutText(PDDocument doc,PDPage page)throws IOException{
