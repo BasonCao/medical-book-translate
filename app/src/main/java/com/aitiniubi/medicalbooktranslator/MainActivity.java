@@ -642,7 +642,7 @@ public class MainActivity extends Activity {
         box.addView(provider);box.addView(model);box.addView(refreshGemini);box.addView(customModel);box.addView(ep);box.addView(key);box.addView(keyLink);
         box.addView(save);box.addView(test);box.addView(clear);box.addView(note);box.addView(fallbackNote);
 
-        updateProfileButtons.run();
+        updateProfileButtons[0].run();
         int initial=active[0];String ip=profileProvider(initial);
         provider.setSelection(Math.max(0,indexOf(PROVIDERS,ip)));
         refresh.run();
