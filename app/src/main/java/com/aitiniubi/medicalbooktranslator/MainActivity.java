@@ -69,6 +69,7 @@ public class MainActivity extends Activity {
         Button glossary=findViewById(R.id.glossaryButton);
         export=findViewById(R.id.exportButton);
         reset=findViewById(R.id.resetButton);
+        pdfLayout=findViewById(R.id.pdfLayoutButton);
 
         open.setOnClickListener(v->pick());
         analyze.setOnClickListener(v->analyze());
@@ -76,6 +77,7 @@ public class MainActivity extends Activity {
         glossary.setOnClickListener(v->glossary());
         translate.setOnClickListener(v->translate());
         export.setOnClickListener(v->saveOutput());
+        pdfLayout.setOnClickListener(v->choosePdfLayoutAndTranslate(fallbackProviders()));
         reset.setOnClickListener(v->resetProgress());
 
         restoreWorkspace();
@@ -177,6 +179,7 @@ public class MainActivity extends Activity {
                 if(pdfMode && temp.length()<5)throw new IOException("File PDF rỗng hoặc không hợp lệ.");
                 String hash=TranslationStateStore.sha256(temp);
                 workspace=new File(new File(getFilesDir(),"translation_workspaces"),hash);
+                if(pdfLayout!=null)pdfLayout.setVisibility(pdfMode?View.VISIBLE:View.GONE);
                 if(!workspace.exists()&&!workspace.mkdirs())throw new IOException("Không tạo được translation workspace.");
                 selectedFile=new File(workspace,"source"+ext);
                 copyFile(temp,selectedFile);
@@ -363,98 +366,58 @@ public class MainActivity extends Activity {
                     .setMessage("Hãy chọn EPUB/PDF trước để tạo workspace cho glossary.")
                     .setPositiveButton("OK",null).show();return;
         }
-        List<GlossaryManager.Term> terms=GlossaryManager.load(workspace);
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(16,4,16,4);
-        TextView info=new TextView(this);
-        info.setText("Tổng "+terms.size()+" thuật ngữ. Sửa trực tiếp rồi bấm LƯU. NẠP THÊM CSV sẽ cộng thêm, không ghi đè thuật ngữ cũ; English trùng sẽ bỏ qua.");
-        root.addView(info);
-
-        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("🔎 Tìm thuật ngữ English / Vietnamese");
-        root.addView(search);
-
+        final ArrayList<GlossaryManager.Term> all=new ArrayList<>(GlossaryManager.load(workspace));
+        final ArrayList<GlossaryManager.Term> shown=new ArrayList<>(all);
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(12,4,12,4);
+        TextView info=new TextView(this);info.setText("Tổng "+all.size()+" thuật ngữ. Chạm một dòng để chỉnh sửa. Nạp CSV sẽ cộng thêm, không ghi đè.");root.addView(info);
+        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("🔎 Tìm English / Vietnamese");root.addView(search);
         LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.HORIZONTAL);
-        Button add=new Button(this);add.setText("➕ THÊM");
-        Button imp=new Button(this);imp.setText("📥 NẠP THÊM CSV");
-        actions.addView(add,new LinearLayout.LayoutParams(0,-2,1));
-        actions.addView(imp,new LinearLayout.LayoutParams(0,-2,1));
-        root.addView(actions);
-
-        ScrollView sv=new ScrollView(this);
-        LinearLayout list=new LinearLayout(this);list.setOrientation(LinearLayout.VERTICAL);
-        sv.addView(list);root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
-
-        ArrayList<LinearLayout> rows=new ArrayList<>();
-        ArrayList<GlossaryManager.Term> current=new ArrayList<>(terms);
-
-        java.util.function.BiConsumer<GlossaryManager.Term,Boolean> addRow=(t,focus)->{
-            LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.VERTICAL);row.setPadding(0,8,0,8);
-            EditText en=new EditText(this);en.setSingleLine(true);en.setText(t==null?"":t.english);en.setHint("English *");
-            EditText vi=new EditText(this);vi.setSingleLine(true);vi.setText(t==null?"":t.vietnamese);vi.setHint("Vietnamese *");
-            EditText ca=new EditText(this);ca.setSingleLine(true);ca.setText(t==null?"":t.category);ca.setHint("Category");
-            EditText no=new EditText(this);no.setSingleLine(true);no.setText(t==null?"":t.note);no.setHint("Note");
-            row.addView(en);row.addView(vi);row.addView(ca);row.addView(no);list.addView(row);rows.add(row);
-            if(focus){en.requestFocus();sv.post(()->sv.fullScroll(View.FOCUS_DOWN));}
+        Button add=new Button(this);add.setText("➕ THÊM");Button imp=new Button(this);imp.setText("📥 NẠP THÊM CSV");
+        actions.addView(add,new LinearLayout.LayoutParams(0,-2,1));actions.addView(imp,new LinearLayout.LayoutParams(0,-2,1));root.addView(actions);
+        final ListView list=new ListView(this);list.setDividerHeight(1);root.addView(list,new LinearLayout.LayoutParams(-1,0,1));
+        BaseAdapter adapter=new BaseAdapter(){
+            public int getCount(){return shown.size();} public Object getItem(int position){return shown.get(position);} public long getItemId(int position){return position;}
+            public View getView(int position,View convertView,android.view.ViewGroup parent){
+                TextView tv=(TextView)(convertView instanceof TextView?convertView:new TextView(MainActivity.this));
+                GlossaryManager.Term t=shown.get(position);tv.setText((position+1)+". "+t.english+" → "+t.vietnamese);tv.setTextSize(15);tv.setPadding(12,12,12,12);tv.setMaxLines(2);return tv;
+            }
         };
-
-        for(GlossaryManager.Term t:terms)addRow.accept(t,false);
-
+        list.setAdapter(adapter);
         Runnable filter=()->{
-            String q=search.getText().toString().trim().toLowerCase(Locale.US);
-            for(LinearLayout row:rows){
-                String en=((EditText)row.getChildAt(0)).getText().toString().toLowerCase(Locale.US);
-                String vi=((EditText)row.getChildAt(1)).getText().toString().toLowerCase(Locale.US);
-                row.setVisibility(q.isEmpty()||en.contains(q)||vi.contains(q)?View.VISIBLE:View.GONE);
-            }
+            String q=search.getText().toString().trim().toLowerCase(Locale.US);shown.clear();
+            for(GlossaryManager.Term t:all){String en=t.english==null?"":t.english.toLowerCase(Locale.US);String vi=t.vietnamese==null?"":t.vietnamese.toLowerCase(Locale.US);if(q.isEmpty()||en.contains(q)||vi.contains(q))shown.add(t);}
+            adapter.notifyDataSetChanged();info.setText("Tổng "+all.size()+" thuật ngữ · đang hiển thị "+shown.size());
         };
-        search.addTextChangedListener(new android.text.TextWatcher(){
-            public void beforeTextChanged(CharSequence s,int st,int c1,int c2){}
-            public void onTextChanged(CharSequence s,int st,int b,int c1){filter.run();}
-            public void afterTextChanged(android.text.Editable e){}
-        });
-
-        AlertDialog dlg=new AlertDialog.Builder(this).setTitle("📚 Trung tâm thuật ngữ ("+terms.size()+")")
-                .setView(root).setNegativeButton("Đóng",null).setPositiveButton("💾 LƯU",null).create();
-
-        add.setOnClickListener(v->addRow.accept(null,true));
-        imp.setOnClickListener(v->{
-            Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("text/*");
-            i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"text/csv","text/comma-separated-values","application/csv","text/plain"});
-            i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,12);dlg.dismiss();
-        });
-
-        dlg.setOnShowListener(x->dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-            ArrayList<GlossaryManager.Term> edited=new ArrayList<>();
-            HashSet<String> seen=new HashSet<>();
-            for(LinearLayout row:rows){
-                if(row.getVisibility()!=View.VISIBLE && !search.getText().toString().trim().isEmpty())continue;
-                if(row.getChildCount()<4)continue;
-                String en=((EditText)row.getChildAt(0)).getText().toString().trim();
-                String vi=((EditText)row.getChildAt(1)).getText().toString().trim().replace("\\\\n","\n");
-                if(en.isEmpty()||vi.isEmpty())continue;
-                String k=en.toLowerCase(Locale.US);
-                if(!seen.add(k))continue;
-                edited.add(new GlossaryManager.Term(en,vi,
-                        ((EditText)row.getChildAt(2)).getText().toString().trim(),
-                        ((EditText)row.getChildAt(3)).getText().toString().trim()));
-            }
-            // A filtered view must not accidentally delete hidden rows. Merge the
-            // edited visible rows back with the untouched original rows.
-            if(!search.getText().toString().trim().isEmpty()){
-                LinkedHashMap<String,GlossaryManager.Term> merged=new LinkedHashMap<>();
-                for(GlossaryManager.Term t:terms)merged.put(t.english.trim().toLowerCase(Locale.US),t);
-                for(GlossaryManager.Term t:edited)merged.put(t.english.trim().toLowerCase(Locale.US),t);
-                edited=new ArrayList<>(merged.values());
-            }
-            try{
-                GlossaryManager.save(workspace,edited);
-                Toast.makeText(this,"Đã lưu "+edited.size()+" thuật ngữ.",Toast.LENGTH_LONG).show();
-                report.setText("📚 Glossary: "+edited.size()+" thuật ngữ.");
-                dlg.dismiss();
-            }catch(Exception e){showError(e);}
-        }));
+        search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c1,int c2){}public void onTextChanged(CharSequence s,int st,int b,int c1){filter.run();}public void afterTextChanged(android.text.Editable e){}});
+        final AlertDialog dlg=new AlertDialog.Builder(this).setTitle("📚 Trung tâm thuật ngữ ("+all.size()+")").setView(root).setNegativeButton("Đóng",null).create();
+        list.setOnItemClickListener((parent,view,position,id)->{GlossaryManager.Term old=shown.get(position);editGlossaryTerm(all,old,()->{filter.run();});});
+        add.setOnClickListener(v->{GlossaryManager.Term empty=new GlossaryManager.Term("","","","");editGlossaryTerm(all,empty,()->{shown.clear();shown.addAll(all);adapter.notifyDataSetChanged();info.setText("Tổng "+all.size()+" thuật ngữ.");});});
+        imp.setOnClickListener(v->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("text/*");i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"text/csv","text/comma-separated-values","application/csv","text/plain"});i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,12);dlg.dismiss();});
         dlg.show();
     }
 
+    private void editGlossaryTerm(ArrayList<GlossaryManager.Term> all,GlossaryManager.Term old,Runnable changed){
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(16,4,16,4);
+        EditText en=new EditText(this);en.setSingleLine(true);en.setHint("English *");en.setText(old.english);box.addView(en);
+        EditText vi=new EditText(this);vi.setSingleLine(true);vi.setHint("Vietnamese *");vi.setText(old.vietnamese);box.addView(vi);
+        EditText ca=new EditText(this);ca.setSingleLine(true);ca.setHint("Category");ca.setText(old.category);box.addView(ca);
+        EditText no=new EditText(this);no.setSingleLine(true);no.setHint("Note");no.setText(old.note);box.addView(no);
+        AlertDialog.Builder b=new AlertDialog.Builder(this).setTitle(old.english.isEmpty()?"➕ Thêm thuật ngữ":"✏️ Chỉnh sửa thuật ngữ").setView(box).setNegativeButton("Hủy",null).setPositiveButton("LƯU",null);
+        if(!old.english.isEmpty())b.setNeutralButton("XÓA",null);
+        AlertDialog d=b.create();
+        d.setOnShowListener(x->{
+            d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                String english=en.getText().toString().trim();String vietnamese=vi.getText().toString().trim().replace("\\n","\n");
+                if(english.isEmpty()||vietnamese.isEmpty()){Toast.makeText(this,"English và Vietnamese không được trống.",Toast.LENGTH_SHORT).show();return;}
+                String key=english.toLowerCase(Locale.US);
+                for(GlossaryManager.Term t:all)if(t!=old&&t.english!=null&&t.english.trim().toLowerCase(Locale.US).equals(key)){Toast.makeText(this,"English đã tồn tại trong glossary.",Toast.LENGTH_SHORT).show();return;}
+                GlossaryManager.Term updated=new GlossaryManager.Term(english,vietnamese,ca.getText().toString().trim(),no.getText().toString().trim());int idx=all.indexOf(old);if(idx>=0)all.set(idx,updated);else all.add(updated);
+                try{GlossaryManager.save(workspace,all);changed.run();d.dismiss();Toast.makeText(this,"Đã lưu thuật ngữ.",Toast.LENGTH_SHORT).show();}catch(Exception ex){showError(ex);}
+            });
+            if(!old.english.isEmpty())d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->{new AlertDialog.Builder(this).setTitle("Xóa thuật ngữ?").setMessage(old.english).setPositiveButton("Xóa",(dd,ww)->{all.remove(old);try{GlossaryManager.save(workspace,all);changed.run();d.dismiss();Toast.makeText(this,"Đã xóa.",Toast.LENGTH_SHORT).show();}catch(Exception ex){showError(ex);}}).setNegativeButton("Hủy",null).show();});
+        });
+        d.show();
+    }
     private String profileKey(int slot,String field){return "ai_profile_"+slot+"_"+field;}
     private boolean hasProfile(int slot){return !prefsHolder.getString(profileKey(slot,"key"),"").trim().isEmpty();}
     private String profileProvider(int slot){return prefsHolder.getString(profileKey(slot,"provider"),PROVIDERS[0]);}
