@@ -408,20 +408,20 @@ public class MainActivity extends Activity {
         profile.setSelection(Math.max(0,Math.min(9,prefsHolder.getInt("active_profile",1)-1)));
         Spinner provider=new Spinner(this);provider.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,PROVIDERS));
         provider.setSelection(Math.max(0,indexOf(PROVIDERS,providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT)))));
-        Spinner model=new Spinner(this); 
-        profile.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
-            public void onItemSelected(AdapterView<?> a,View v,int p,long id){
-                prefsHolder.edit().putInt("active_profile",p+1).apply();
-                String sp=profileProvider(p+1);provider.setSelection(Math.max(0,indexOf(PROVIDERS,sp)));
-                key.setText(prefsHolder.getString(profileKey(p+1,"key"),""));
-            }
-            public void onNothingSelected(AdapterView<?> a){}
-        });
-
+        Spinner model=new Spinner(this);
         Button refreshGemini=new Button(this);refreshGemini.setText("🔄 Làm mới danh sách Gemini model");
         EditText customModel=new EditText(this);customModel.setHint("Model ID tùy chỉnh");customModel.setSingleLine(true);
         EditText ep=new EditText(this);ep.setHint("Endpoint");ep.setSingleLine(true);
         EditText key=new EditText(this);key.setHint("API key");key.setSingleLine(true);key.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        profile.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(AdapterView<?> a,View v,int p,long id){
+                prefsHolder.edit().putInt("active_profile",p+1).apply();
+                String sp=profileProvider(p+1);
+                provider.setSelection(Math.max(0,indexOf(PROVIDERS,sp)));
+                key.setText(prefsHolder.getString(profileKey(p+1,"key"),""));
+            }
+            public void onNothingSelected(AdapterView<?> a){}
+        });
         TextView note=new TextView(this);note.setTextSize(12);note.setPadding(0,12,0,0);
         TextView fallbackNote=new TextView(this);fallbackNote.setTextSize(12);fallbackNote.setPadding(0,8,0,0);
         CheckBox freePool=new CheckBox(this);freePool.setText("FREE AI POOL — OpenRouter Free + Gemini Free");
@@ -440,9 +440,12 @@ public class MainActivity extends Activity {
             else if(p.equals(PROVIDERS[3])){ep.setText(DEEPSEEK_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("DeepSeek V4.1 Flash và V4 Pro hỗ trợ OpenAI Chat Completions.");}
             else if(p.equals(PROVIDERS[4])){ep.setText(MISTRAL_ENDPOINT);customModel.setVisibility(View.GONE);note.setText("Mistral API hỗ trợ OpenAI-compatible Chat Completions.");}
             else{ep.setText(prefsHolder.getString("endpoint_custom",""));customModel.setText(providerModel(PROVIDERS[5]));customModel.setVisibility(View.VISIBLE);note.setText("Provider tùy chỉnh: nhập endpoint, model và API key.");}
-            String saved=providerModel(p);model.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
+            int slot=profile.getSelectedItemPosition()+1;
+            String saved=prefsHolder.getString(profileKey(slot,"model"),"");
+            model.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,labels));
             int sel=indexOf(ms,saved);if(sel<0)sel=0;model.setSelection(sel);model.setVisibility(p.equals(PROVIDERS[5])?View.GONE:View.VISIBLE);
-            key.setText(prefsHolder.getString(profileKey(profile.getSelectedItemPosition()+1,"key"),""));
+            key.setText(prefsHolder.getString(profileKey(slot,"key"),""));
+            if(p.equals(PROVIDERS[5]))customModel.setText(saved);
             if(p.equals(PROVIDERS[0])){keyLink.setText("🔑 OpenRouter API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://openrouter.ai/settings/keys"));}
             else if(p.equals(PROVIDERS[1])){keyLink.setText("🔑 Gemini API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://aistudio.google.com/apikey"));}
             else if(p.equals(PROVIDERS[2])){keyLink.setText("🔑 OpenAI API key");keyLink.setVisibility(View.VISIBLE);keyLink.setOnClickListener(v->openUrl("https://platform.openai.com/api-keys"));}
