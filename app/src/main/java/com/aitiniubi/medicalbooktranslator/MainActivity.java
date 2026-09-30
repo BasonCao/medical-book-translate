@@ -444,7 +444,7 @@ public class MainActivity extends Activity {
                 report.setText("📚 Glossary: "+edited.size()+" thuật ngữ.");
                 dlg.dismiss();
             }catch(Exception e){showError(e);}
-        });
+        }));
         dlg.show();
     }
 
