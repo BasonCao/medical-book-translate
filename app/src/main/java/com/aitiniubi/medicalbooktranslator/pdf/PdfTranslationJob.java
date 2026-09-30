@@ -64,9 +64,9 @@ public final class PdfTranslationJob {
 
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
-                boolean layoutV8="8".equals(state.getProperty("pdf.layout.version",""));
+                boolean layoutV9="9".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
-                    String t=layoutV8?state.getProperty("page."+i,""):"";
+                    String t=layoutV9?state.getProperty("page."+i,""):"";
                     if(!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
@@ -115,7 +115,7 @@ public final class PdfTranslationJob {
                 }
 
                 try{
-                    state.setProperty("pdf.layout.version","8");
+                    state.setProperty("pdf.layout.version","9");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
                         translations.put(result.page,result.text);
@@ -208,7 +208,7 @@ public final class PdfTranslationJob {
                 LayoutUnit unit=units.get(n);
                 if(drawTableCellIfNeeded(cs,text,unit,fonts,pageHeight,tables))
                     continue;
-                drawUnitClipped(cs,text,unit,fonts,pageHeight);
+                drawUnitSafe(cs,text,unit,fonts,pageHeight,originalImages);
             }
         }
     }
@@ -580,69 +580,38 @@ public final class PdfTranslationJob {
         return true;
     }
 
-    private static void drawUnitClipped(PDPageContentStream cs,String text,
-                                         LayoutUnit unit,List<FontSlot> fonts,
-                                         float pageHeight)throws IOException{
-        String clean=sanitizeForPdf(text).trim();
-        if(clean.isEmpty())return;
-
-        float maxWidth=Math.max(10f,unit.width-2f);
-        float maxHeight=Math.max(10f,unit.height);
-        float size=Math.max(5.5f,Math.min(18f,unit.fontSize));
-        List<String> lines;
-        while(true){
-            lines=wrapTextHard(clean,fonts,size,maxWidth);
-            float leading=size*1.16f;
-            if(lines.size()*leading<=maxHeight||size<=5.5f)break;
-            size=Math.max(5.5f,size-0.35f);
+    private static void drawUnitSafe(PDPageContentStream cs,String text,LayoutUnit unit,
+                                     List<FontSlot> fonts,float pageHeight,
+                                     List<ImagePlacement> images)throws IOException{
+        if(images==null||images.isEmpty()){
+            drawUnit(cs,text,unit,fonts,pageHeight);
+            return;
         }
 
-        cs.saveGraphicsState();
-        try{
-            // Clip to the original visual text block. This is the final guard
-            // against translated text expanding into an adjacent image.
-            float clipX=unit.x;
-            float clipY=pageHeight-(unit.y+unit.height);
-            cs.addRect(clipX,clipY,Math.max(1f,unit.width),Math.max(1f,unit.height));
-            cs.clip();
-            cs.beginText();
-            cs.setFont(fonts.get(0).font,size);
-            float leading=size*1.16f;
-            for(int i=0;i<lines.size();i++){
-                float y=pageHeight-(unit.y+i*leading)-size*0.84f;
-                if(y<clipY)y=clipY;
-                cs.setTextMatrix(Matrix.getTranslateInstance(unit.x,y));
-                showTextWithFallback(cs,lines.get(i),fonts,size);
+        float safeWidth=Math.max(10f,unit.width);
+        float unitTop=unit.y;
+        float unitBottom=unit.y+unit.height;
+        float unitLeft=unit.x;
+
+        for(ImagePlacement image:images){
+            float imageTop=image.top;
+            float imageBottom=image.top+image.height;
+            boolean verticalOverlap=imageBottom>unitTop+1f
+                    &&imageTop<unitBottom-1f;
+            if(verticalOverlap&&image.x>unitLeft){
+                float candidate=image.x-unitLeft-3f;
+                if(candidate>10f)safeWidth=Math.min(safeWidth,candidate);
             }
-            cs.endText();
-        }finally{
-            cs.restoreGraphicsState();
         }
-    }
 
-    private static List<String> wrapTextHard(String text,List<FontSlot> fonts,
-                                              float size,float maxWidth)throws IOException{
-        List<String> out=new ArrayList<>();
-        for(String paragraph:text.replace("\\r","").split("\\n+")){
-            String p=paragraph.trim();
-            if(p.isEmpty()){out.add("");continue;}
-            StringBuilder line=new StringBuilder();
-            for(int i=0;i<p.length();){
-                int cp=p.codePointAt(i);
-                int next=i+Character.charCount(cp);
-                String token=new String(Character.toChars(cp));
-                String candidate=line.length()==0?token:line+" "+token;
-                if(line.length()>0&&measureWidth(candidate,fonts,size)>maxWidth){
-                    out.add(line.toString());
-                    line=new StringBuilder(token);
-                }else{
-                    line.appendCodePoint(cp);
-                }
-                i=next;
-            }
-            if(line.length()>0)out.add(line.toString());
+        if(safeWidth>=unit.width-0.5f){
+            drawUnit(cs,text,unit,fonts,pageHeight);
+            return;
         }
-        return out;
+
+        LayoutUnit safeUnit=new LayoutUnit(unit.source,unit.x,unit.y,
+                safeWidth,unit.height,unit.fontSize,unit.column);
+        drawUnit(cs,text,safeUnit,fonts,pageHeight);
     }
 
     private static void drawUnit(PDPageContentStream cs,String text,LayoutUnit unit,
@@ -705,19 +674,6 @@ public final class PdfTranslationJob {
         List<TableRegion> tables=new ArrayList<>();
         try{tables.addAll(collectTableRegions(doc.getPage(pageNumber-1)));}
         catch(Exception ignored){}
-        List<TableRegion> inferred=stripper.inferTextTables(
-                doc.getPage(pageNumber-1).getMediaBox().getWidth());
-        for(TableRegion t:inferred){
-            boolean duplicate=false;
-            for(TableRegion existing:tables){
-                if(Math.abs(existing.x0-t.x0)<12f
-                        &&Math.abs(existing.x1-t.x1)<12f
-                        &&Math.abs(existing.top-t.top)<12f){
-                    duplicate=true;break;
-                }
-            }
-            if(!duplicate)tables.add(t);
-        }
         return stripper.buildUnits(
                 doc.getPage(pageNumber-1).getMediaBox().getWidth(),tables);
     }
@@ -973,18 +929,22 @@ public final class PdfTranslationJob {
         List<LayoutUnit> buildUnits(float pageWidth,List<TableRegion> tables){
             List<LayoutLine> lines=buildLines(pageWidth,tables);
             if(lines.isEmpty())return new ArrayList<>();
+
             Map<Integer,List<LayoutLine>> columns=new HashMap<>();
             for(LayoutLine line:lines){
                 float right=line.x+line.width;
                 int col;
-                if(line.x<pageWidth*0.18f && right>pageWidth*0.52f) col=-1; // full width
-                else col=(line.x+line.width/2f<pageWidth/2f)?0:1;
+                if(line.y<330f || (line.x<pageWidth*0.12f && right>pageWidth*0.58f))
+                    col=-1;
+                else
+                    col=(line.x+line.width*0.5f<pageWidth*0.5f)?0:1;
                 columns.computeIfAbsent(col,k->new ArrayList<>()).add(line);
             }
+
             for(List<LayoutLine> list:columns.values())
-                Collections.sort(list,(a,b)->{
-                    int y=Float.compare(a.y,b.y);
-                    return y!=0?y:Float.compare(a.x,b.x);
+                Collections.sort(list,(x,y)->{
+                    int yy=Float.compare(x.y,y.y);
+                    return yy!=0?yy:Float.compare(x.x,y.x);
                 });
 
             List<LayoutUnit> ordered=new ArrayList<>();
@@ -992,13 +952,116 @@ public final class PdfTranslationJob {
             addUnits(ordered,columns.get(0),pageWidth,tables);
             addUnits(ordered,columns.get(1),pageWidth,tables);
 
-            Collections.sort(ordered,(a,b)->{
-                int c=Integer.compare(a.column,b.column);
-                if(c!=0)return c;
-                int y=Float.compare(a.y,b.y);
-                return y!=0?y:Float.compare(a.x,b.x);
+            if(tables!=null&&!tables.isEmpty()){
+                Iterator<LayoutUnit> it=ordered.iterator();
+                while(it.hasNext()){
+                    LayoutUnit u=it.next();
+                    float cx=u.x+u.width*0.5f;
+                    float cy=u.y+u.height*0.5f;
+                    for(TableRegion t:tables){
+                        if(t.contains(cx,cy)){
+                            it.remove();
+                            break;
+                        }
+                    }
+                }
+
+                for(TableRegion t:tables)
+                    ordered.addAll(buildTableCellUnits(t));
+            }
+
+            Collections.sort(ordered,(x,y)->{
+                int cc=Integer.compare(x.column,y.column);
+                if(cc!=0)return cc;
+                int yy=Float.compare(x.y,y.y);
+                return yy!=0?yy:Float.compare(x.x,y.x);
             });
             return ordered;
+        }
+
+        private List<LayoutUnit> buildTableCellUnits(TableRegion table){
+            Map<String,List<TextPosition>> cells=new HashMap<>();
+
+            for(TextPosition glyph:glyphs){
+                String u=glyph.getUnicode();
+                if(u==null||u.isEmpty())continue;
+
+                float cx=glyph.getX()+glyph.getWidth()*0.5f;
+                float cy=glyph.getY()+glyph.getHeight()*0.5f;
+                if(!table.contains(cx,cy))continue;
+
+                float left=table.leftOf(cx);
+                float top=table.rowTop(cy);
+                String key=Math.round(left*10f)+":"+Math.round(top*10f);
+                cells.computeIfAbsent(key,k->new ArrayList<>()).add(glyph);
+            }
+
+            List<LayoutUnit> result=new ArrayList<>();
+            for(List<TextPosition> cellGlyphs:cells.values()){
+                if(cellGlyphs.isEmpty())continue;
+
+                Collections.sort(cellGlyphs,(x,y)->{
+                    int yy=Float.compare(x.getY(),y.getY());
+                    return yy!=0?yy:Float.compare(x.getX(),y.getX());
+                });
+
+                StringBuilder text=new StringBuilder();
+                TextPosition prev=null;
+                float maxSize=0f;
+
+                for(TextPosition glyph:cellGlyphs){
+                    String u=glyph.getUnicode();
+                    if(u==null)continue;
+
+                    if(prev!=null){
+                        float prevCy=prev.getY()+prev.getHeight()*0.5f;
+                        float curCy=glyph.getY()+glyph.getHeight()*0.5f;
+                        float yGap=Math.abs(curCy-prevCy);
+                        float xGap=glyph.getX()-(prev.getX()+prev.getWidth());
+                        if(yGap>Math.max(2f,glyph.getFontSizeInPt()*0.45f)
+                                &&text.length()>0){
+                            text.append(" ");
+                        }else if(xGap>Math.max(0.85f,
+                                Math.min(3.2f,
+                                  Math.max(glyph.getFontSizeInPt(),
+                                           prev.getFontSizeInPt())*0.16f))
+                                &&text.length()>0){
+                            text.append(" ");
+                        }
+                    }
+
+                    text.append(u);
+                    maxSize=Math.max(maxSize,glyph.getFontSizeInPt());
+                    prev=glyph;
+                }
+
+                String clean=text.toString().replaceAll("\\s+"," ").trim();
+                if(clean.isEmpty())continue;
+
+                float cx=0f,cy=0f;
+                for(TextPosition g:cellGlyphs){
+                    cx+=g.getX()+g.getWidth()*0.5f;
+                    cy+=g.getY()+g.getHeight()*0.5f;
+                }
+                cx/=cellGlyphs.size();
+                cy/=cellGlyphs.size();
+
+                float left=table.leftOf(cx);
+                float right=table.rightOf(cx);
+                float top=table.rowTop(cy);
+                float bottom=table.rowBottom(cy);
+                int col=cx<((table.x0+table.x1)*0.5f)?0:1;
+
+                result.add(new LayoutUnit(clean,left,top,
+                        Math.max(1f,right-left),Math.max(1f,bottom-top),
+                        maxSize>0f?maxSize:8f,col));
+            }
+
+            Collections.sort(result,(x,y)->{
+                int yy=Float.compare(x.y,y.y);
+                return yy!=0?yy:Float.compare(x.x,y.x);
+            });
+            return result;
         }
 
         private void addUnits(List<LayoutUnit> out,List<LayoutLine> lines,
