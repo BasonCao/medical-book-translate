@@ -47,7 +47,7 @@ public class MainActivity extends Activity {
 
     private TextView status,report;
     private ProgressBar progress;
-    private Button analyze,translate,export,reset,pdfLayout;
+    private Button analyze,translate,export,reset,pdfLayout,pdfOneColumn,pdfKeepLayout;
     private File selectedFile,lastOutput,workspace;
     private EpubBook book;
     private PdfBook pdfBook;
@@ -70,6 +70,8 @@ public class MainActivity extends Activity {
         export=findViewById(R.id.exportButton);
         reset=findViewById(R.id.resetButton);
         pdfLayout=findViewById(R.id.pdfLayoutButton);
+        pdfOneColumn=findViewById(R.id.pdfOneColumnButton);
+        pdfKeepLayout=findViewById(R.id.pdfKeepLayoutButton);
 
         open.setOnClickListener(v->pick());
         analyze.setOnClickListener(v->analyze());
@@ -78,7 +80,9 @@ public class MainActivity extends Activity {
         translate.setOnClickListener(v->translate());
         export.setOnClickListener(v->saveOutput());
         pdfLayout.setOnClickListener(v->choosePdfLayoutAndTranslate(fallbackProviders()));
-        updatePdfLayoutButton();
+        pdfOneColumn.setOnClickListener(v->startPdfWithLayout(true));
+        pdfKeepLayout.setOnClickListener(v->startPdfWithLayout(false));
+        updatePdfLayoutButtons();
         reset.setOnClickListener(v->resetProgress());
 
         restoreWorkspace();
@@ -95,7 +99,8 @@ public class MainActivity extends Activity {
         workspace=ws;
         File draft=new File(ws,pdfMode?"translated-current.pdf":"translated-current.epub");
         lastOutput=draft.isFile()?draft:null;
-        analyze.setEnabled(true);translate.setEnabled(true);export.setEnabled(lastOutput!=null);
+        analyze.setEnabled(true);translate.setEnabled(!pdfMode);export.setEnabled(lastOutput!=null);
+        updatePdfLayoutButtons();
         TranslationStateStore store=new TranslationStateStore(ws);
         status.setText("📖 Workspace đã lưu\n"+selectedFile.getName()+"\n"+store.summary()+"\nCó thể bấm Dịch / Tiếp tục.");
         report.setText(pdfMode ? "PDF text layer: có thể dịch. PDF scan/image-only không hỗ trợ." : "Tiến độ EPUB được lưu bền vững trong máy. Hết quota hoặc đóng app vẫn có thể tiếp tục.");
@@ -180,7 +185,7 @@ public class MainActivity extends Activity {
                 if(pdfMode && temp.length()<5)throw new IOException("File PDF rỗng hoặc không hợp lệ.");
                 String hash=TranslationStateStore.sha256(temp);
                 workspace=new File(new File(getFilesDir(),"translation_workspaces"),hash);
-                if(pdfLayout!=null){pdfLayout.setVisibility(pdfMode?View.VISIBLE:View.GONE);updatePdfLayoutButton();}
+                if(pdfLayout!=null){updatePdfLayoutButtons();}
                 if(!workspace.exists()&&!workspace.mkdirs())throw new IOException("Không tạo được translation workspace.");
                 selectedFile=new File(workspace,"source"+ext);
                 copyFile(temp,selectedFile);
@@ -188,7 +193,8 @@ public class MainActivity extends Activity {
                 prefsHolder.edit().putString("activeWorkspace",workspace.getAbsolutePath()).putBoolean("activePdf",pdfMode).apply();
                 File draft=new File(workspace,pdfMode?"translated-current.pdf":"translated-current.epub");
                 lastOutput=draft.isFile()?draft:null;
-                analyze.setEnabled(true);translate.setEnabled(true);export.setEnabled(lastOutput!=null);
+                analyze.setEnabled(true);translate.setEnabled(!pdfMode);export.setEnabled(lastOutput!=null);
+                updatePdfLayoutButtons();
                 status.setText("Đã chọn: "+u.getLastPathSegment()+"\nLoại: "+(pdfMode?"PDF text layer":"EPUB")+"\nWorkspace: "+workspace.getName());
                 report.setText(pdfMode ? "Bấm Phân tích PDF. App chỉ dịch PDF có text layer, không xử lý PDF scan." : "Bấm Phân tích EPUB để kiểm tra cấu trúc, hoặc Dịch / Tiếp tục để chạy translation queue.");
             }catch(Exception e){showError(e);}
@@ -738,7 +744,7 @@ public class MainActivity extends Activity {
         if(providers.isEmpty()){settings();return;}
         if(workspace==null)workspace=new File(getFilesDir(),"translation_workspaces");
         if(pdfMode){
-            choosePdfLayoutAndTranslate(providers);
+            Toast.makeText(this,"Chọn 1 CỘT hoặc GIỮ NGUYÊN BỐ CỤC GỐC.",Toast.LENGTH_SHORT).show();
             return;
         }
         File out=new File(workspace,"translated-final.epub");
@@ -764,11 +770,27 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void updatePdfLayoutButton(){
-        if(pdfLayout==null)return;
-        boolean one=prefsHolder.getInt("pdf_layout_mode",0)==1;
-        pdfLayout.setText(one?"📐 Bố cục PDF: 1 cột":"📐 Bố cục PDF: 2 cột như PDF gốc");
+    private void updatePdfLayoutButtons(){
+        boolean visible=pdfMode;
+        if(pdfLayout!=null)pdfLayout.setVisibility(View.GONE);
+        if(pdfOneColumn!=null)pdfOneColumn.setVisibility(visible?View.VISIBLE:View.GONE);
+        if(pdfKeepLayout!=null)pdfKeepLayout.setVisibility(visible?View.VISIBLE:View.GONE);
+        if(pdfOneColumn!=null)pdfOneColumn.setText("📄 1 CỘT");
+        if(pdfKeepLayout!=null)pdfKeepLayout.setText("📰 GIỮ NGUYÊN BỐ CỤC GỐC");
     }
+
+    private void startPdfWithLayout(boolean singleColumn){
+        if(!pdfMode||selectedFile==null){
+            Toast.makeText(this,"Hãy chọn một file PDF trước.",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        List<TranslationRouter.Provider> providers=fallbackProviders();
+        if(providers.isEmpty()){settings();return;}
+        prefsHolder.edit().putInt("pdf_layout_mode",singleColumn?1:0).apply();
+        updatePdfLayoutButtons();
+        translatePdf(providers,singleColumn);
+    }
+
 
     private void choosePdfLayoutAndTranslate(List<TranslationRouter.Provider> providers){
         final int saved=prefsHolder.getInt("pdf_layout_mode",0);
