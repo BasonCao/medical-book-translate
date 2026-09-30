@@ -127,7 +127,7 @@ public final class PdfTranslationJob {
         },"pdf-translation").start();
     }
 
-    /** Preserve the original page graphics/images and replace only the text. */
+    /** Preserve the original page graphics/images and replace only the text. V1.9.1 layout mode. */
     private static void buildReflowPdf(Context context,File source,File output,
                                        Map<Integer,String> translations)throws Exception{
         PDFBoxResourceLoader.init(context.getApplicationContext());
