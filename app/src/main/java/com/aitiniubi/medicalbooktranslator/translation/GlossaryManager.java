@@ -7,7 +7,7 @@ import java.util.*;
 public final class GlossaryManager {
     public static final class Term {
         public final String english, vietnamese, category, note;
-        Term(String e,String v,String c,String n){english=e;vietnamese=v;category=c;note=n;}
+        public Term(String e,String v,String c,String n){english=e;vietnamese=v;category=c;note=n;}
     }
     private GlossaryManager(){}
 
