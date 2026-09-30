@@ -714,7 +714,7 @@ public final class PdfTranslationJob {
             return false;
         }
 
-        private int columnOf(LayoutLine l,float pageWidth){        private int columnOf(LayoutLine l,float pageWidth){
+        private int columnOf(LayoutLine l,float pageWidth){
             float right=l.x+l.width;
             // Top-of-page journal material (running header, title, authors,
             // affiliations and figure captions above a top figure) stays before
@@ -785,7 +785,7 @@ public final class PdfTranslationJob {
             return out;
         }
 
-        private void addLine(List<LayoutLine> out,List<TextPosition> piece){        private void addLine(List<LayoutLine> out,List<TextPosition> piece){
+        private void addLine(List<LayoutLine> out,List<TextPosition> piece){
             if(piece==null||piece.isEmpty())return;
             StringBuilder s=new StringBuilder();float minX=Float.MAX_VALUE,minY=Float.MAX_VALUE;
             float maxX=0,maxY=0,size=0;TextPosition prev=null;
@@ -982,7 +982,7 @@ public final class PdfTranslationJob {
         return "Do".equals(name)||"sh".equals(name);
     }
 
-    private static boolean isTextOnlyOperator(String name){private static boolean isTextOnlyOperator(String name){
+    private static boolean isTextOnlyOperator(String name){
         // Text state operators
         if("Tc".equals(name)||"Tw".equals(name)||"Tz".equals(name)
                 ||"TL".equals(name)||"Tf".equals(name)||"Tr".equals(name)
