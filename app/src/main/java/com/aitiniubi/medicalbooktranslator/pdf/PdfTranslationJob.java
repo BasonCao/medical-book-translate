@@ -64,9 +64,9 @@ public final class PdfTranslationJob {
 
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
-                boolean layoutV7="7".equals(state.getProperty("pdf.layout.version",""));
+                boolean layoutV8="8".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
-                    String t=layoutV7?state.getProperty("page."+i,""):"";
+                    String t=layoutV8?state.getProperty("page."+i,""):"";
                     if(!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
@@ -115,7 +115,7 @@ public final class PdfTranslationJob {
                 }
 
                 try{
-                    state.setProperty("pdf.layout.version","7");
+                    state.setProperty("pdf.layout.version","8");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
                         translations.put(result.page,result.text);
@@ -175,7 +175,7 @@ public final class PdfTranslationJob {
         }
     }
 
-    /** V1.10: restore the original two-column page geometry. Original images,
+    /** V1.10.14: preserve two-column geometry, isolate table cells, and protect images. Original images,
      * tables and vector artwork are retained; only the source text operators are
      * removed and translated units are drawn back inside their original boxes. */
     private static void buildTwoColumnPage(PDDocument doc,PDPage page,
@@ -185,12 +185,23 @@ public final class PdfTranslationJob {
         // Capture table geometry before rewriting page streams.
         List<TableRegion> tables=collectTableRegions(page);
 
+        // Capture original images before stripping source text. Some publisher
+        // PDFs place text and an image in the same Form XObject; redrawing the
+        // original image after stripping guarantees no leftover English text
+        // can remain visually over a figure.
+        List<ImagePlacement> originalImages=collectImagePlacements(page);
+
         // Remove source text while preserving the original vector graphics.
         stripTextOperators(doc,page);
 
         float pageHeight=page.getMediaBox().getHeight();
         try(PDPageContentStream cs=new PDPageContentStream(doc,page,
                 PDPageContentStream.AppendMode.APPEND,true,true)){
+            for(ImagePlacement p:originalImages){
+                try{
+                    cs.drawImage(p.image,p.x,p.y,p.width,p.height);
+                }catch(Exception ignored){}
+            }
             for(int n=0;n<units.size();n++){
                 String text=translated.get(n);
                 if(text==null||text.trim().isEmpty())continue;
@@ -914,7 +925,7 @@ public final class PdfTranslationJob {
         }
 
         boolean contains(float x,float y){
-            return x>=x0-2f&&x<=x1+2f&&y>=top-2f&&y<=bottom+2f;
+            return x>=x0-3f&&x<=x1+3f&&y>=top-3f&&y<=bottom+3f;
         }
 
         float leftOf(float x){
@@ -1003,7 +1014,11 @@ public final class PdfTranslationJob {
 
                 // A table divider means a new cell or a new table row. Elsewhere
                 // keep the paragraph-merging behavior used for normal prose.
-                boolean newUnit=current==null || verticalGap>8f || guideBetween || rowBetween;
+                float xShift=current==null?0f:Math.abs(line.x-current.x);
+                boolean distinctVisualBlock=current!=null && xShift>24f;
+
+                boolean newUnit=current==null || verticalGap>8f || guideBetween
+                        || rowBetween || distinctVisualBlock;
 
                 if(newUnit){
                     if(current!=null)out.add(current);
@@ -1123,7 +1138,7 @@ public final class PdfTranslationJob {
                             }
                         }
 
-                        float threshold=Math.max(42f,prev.getFontSizeInPt()*3.5f);
+                        float threshold=Math.max(24f,prev.getFontSizeInPt()*3.5f);
                         if((gap>threshold||crossesTwoColumns||crossesVerticalGuide)&&!piece.isEmpty()){
                             addLine(out,piece);
                             piece=new ArrayList<>();
