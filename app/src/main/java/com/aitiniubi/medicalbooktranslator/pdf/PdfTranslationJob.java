@@ -64,9 +64,9 @@ public final class PdfTranslationJob {
 
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
-                boolean layoutV4="4".equals(state.getProperty("pdf.layout.version",""));
+                boolean layoutV5="5".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
-                    String t=layoutV4?state.getProperty("page."+i,""):"";
+                    String t=layoutV5?state.getProperty("page."+i,""):"";
                     if(!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
@@ -115,7 +115,7 @@ public final class PdfTranslationJob {
                 }
 
                 try{
-                    state.setProperty("pdf.layout.version","4");
+                    state.setProperty("pdf.layout.version","5");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
                         translations.put(result.page,result.text);
@@ -556,7 +556,84 @@ public final class PdfTranslationJob {
         stripper.setSortByPosition(true);
         stripper.setStartPage(pageNumber);stripper.setEndPage(pageNumber);
         stripper.getText(doc);
-        return stripper.buildUnits(doc.getPage(pageNumber-1).getMediaBox().getWidth());
+        Set<Float> verticalGuides;
+        try{
+            verticalGuides=collectVerticalGuides(doc.getPage(pageNumber-1));
+        }catch(Exception ignored){
+            verticalGuides=Collections.emptySet();
+        }
+        return stripper.buildUnits(doc.getPage(pageNumber-1).getMediaBox().getWidth(),verticalGuides);
+    }
+
+    /**
+     * Collect long vertical vector lines/rectangle edges. Publisher tables in
+     * the target PDF use these as real cell dividers, which gives us a reliable
+     * boundary even when the two cell texts are separated by only ~5pt.
+     */
+    private static Set<Float> collectVerticalGuides(PDPage page)throws IOException{
+        GuideCollector collector=new GuideCollector(page);
+        collector.processPage(page);
+        return collector.guides;
+    }
+
+    private static final class GuideCollector extends PDFGraphicsStreamEngine{
+        final Set<Float> guides=new HashSet<>();
+        private PointF currentPoint;
+        private PointF subpathStart;
+
+        GuideCollector(PDPage page){super(page);}
+
+        private void addVertical(float x1,float y1,float x2,float y2){
+            if(Math.abs(x2-x1)<=1.2f && Math.abs(y2-y1)>=8f){
+                guides.add((x1+x2)*0.5f);
+            }
+        }
+
+        @Override public void moveTo(float x,float y){
+            currentPoint=new PointF(x,y);
+            subpathStart=new PointF(x,y);
+        }
+
+        @Override public void lineTo(float x,float y){
+            if(currentPoint!=null)addVertical(currentPoint.x,currentPoint.y,x,y);
+            currentPoint=new PointF(x,y);
+        }
+
+        @Override public void appendRectangle(PointF p0,PointF p1,PointF p2,PointF p3){
+            addVertical(p0.x,p0.y,p1.x,p1.y);
+            addVertical(p1.x,p1.y,p2.x,p2.y);
+            addVertical(p2.x,p2.y,p3.x,p3.y);
+            addVertical(p3.x,p3.y,p0.x,p0.y);
+            currentPoint=p0;
+            subpathStart=p0;
+        }
+
+        @Override public void closePath(){
+            if(currentPoint!=null&&subpathStart!=null){
+                addVertical(currentPoint.x,currentPoint.y,subpathStart.x,subpathStart.y);
+                currentPoint=subpathStart;
+            }
+        }
+
+        @Override public void curveTo(float x1,float y1,float x2,float y2,float x3,float y3){
+            currentPoint=new PointF(x3,y3);
+        }
+
+        @Override public void endPath(){
+            currentPoint=null;
+            subpathStart=null;
+        }
+
+        @Override public PointF getCurrentPoint(){return currentPoint;}
+        @Override public void clip(Path.FillType windingRule){}
+        @Override public void fillAndStrokePath(Path.FillType windingRule){}
+        @Override public void fillPath(Path.FillType windingRule){}
+        @Override public void shadingFill(COSName shadingName){}
+        @Override public void strokePath(){
+            currentPoint=null;
+            subpathStart=null;
+        }
+        @Override public void drawImage(PDImage pdImage)throws IOException{}
     }
 
     private static final class LayoutStripper extends PDFTextStripper{
@@ -568,8 +645,8 @@ public final class PdfTranslationJob {
             super.processTextPosition(text);
         }
 
-        List<LayoutUnit> buildUnits(float pageWidth){
-            List<LayoutLine> lines=buildLines(pageWidth);
+        List<LayoutUnit> buildUnits(float pageWidth,Set<Float> verticalGuides){
+            List<LayoutLine> lines=buildLines(pageWidth,verticalGuides);
             if(lines.isEmpty())return new ArrayList<>();
             Map<Integer,List<LayoutLine>> columns=new HashMap<>();
             for(LayoutLine line:lines){
@@ -580,34 +657,39 @@ public final class PdfTranslationJob {
                 columns.computeIfAbsent(col,k->new ArrayList<>()).add(line);
             }
             for(List<LayoutLine> list:columns.values())
-                Collections.sort(list,(a,b)->Float.compare(a.y,b.y));
+                Collections.sort(list,(a,b)->{
+                    int y=Float.compare(a.y,b.y);
+                    return y!=0?y:Float.compare(a.x,b.x);
+                });
 
             List<LayoutUnit> ordered=new ArrayList<>();
-            // Header/full-width material comes first.
-            addUnits(ordered,columns.get(-1),pageWidth);
-            // Then left column, then right column. This matches normal medical
-            // journal reading order for the target two-column layouts.
-            addUnits(ordered,columns.get(0),pageWidth);
-            addUnits(ordered,columns.get(1),pageWidth);
+            addUnits(ordered,columns.get(-1),pageWidth,verticalGuides);
+            addUnits(ordered,columns.get(0),pageWidth,verticalGuides);
+            addUnits(ordered,columns.get(1),pageWidth,verticalGuides);
+
             Collections.sort(ordered,(a,b)->{
-                // Preserve column order, but keep header units at the top.
                 int c=Integer.compare(a.column,b.column);
                 if(c!=0)return c;
-                return Float.compare(a.y,b.y);
+                int y=Float.compare(a.y,b.y);
+                return y!=0?y:Float.compare(a.x,b.x);
             });
             return ordered;
         }
 
-        private void addUnits(List<LayoutUnit> out,List<LayoutLine> lines,float pageWidth){
+        private void addUnits(List<LayoutUnit> out,List<LayoutLine> lines,
+                              float pageWidth,Set<Float> verticalGuides){
             if(lines==null||lines.isEmpty())return;
             LayoutUnit current=null;
             for(LayoutLine line:lines){
                 float verticalGap=current==null?Float.MAX_VALUE:line.y-current.bottom;
-                // Do not split a paragraph merely because a PDF font size changes.
-                // Font-size changes inside the same visual block are common in
-                // journal PDFs (bold/italic/superscript), and splitting there can
-                // create overlapping translated blocks.
-                boolean newUnit=current==null || verticalGap>8f;
+                boolean guideBetween=current!=null
+                        && hasVerticalGuideBetween(current.x+current.width,line.x,verticalGuides);
+
+                // A vertical vector divider on the same text row means this is
+                // a different table cell. Do not merge the two cells into one
+                // translated UNIT.
+                boolean newUnit=current==null || verticalGap>8f || guideBetween;
+
                 if(newUnit){
                     if(current!=null)out.add(current);
                     current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
@@ -624,7 +706,15 @@ public final class PdfTranslationJob {
             if(current!=null)out.add(current);
         }
 
-        private int columnOf(LayoutLine l,float pageWidth){
+        private boolean hasVerticalGuideBetween(float left,float right,Set<Float> guides){
+            if(guides==null||guides.isEmpty()||right<=left+1f)return false;
+            for(Float g:guides){
+                if(g!=null && g>left+1.0f && g<right-0.5f)return true;
+            }
+            return false;
+        }
+
+        private int columnOf(LayoutLine l,float pageWidth){        private int columnOf(LayoutLine l,float pageWidth){
             float right=l.x+l.width;
             // Top-of-page journal material (running header, title, authors,
             // affiliations and figure captions above a top figure) stays before
@@ -635,7 +725,7 @@ public final class PdfTranslationJob {
             return l.x+l.width/2f<pageWidth/2f?0:1;
         }
 
-        List<LayoutLine> buildLines(float pageWidth){
+        List<LayoutLine> buildLines(float pageWidth,Set<Float> verticalGuides){
             List<LayoutLine> out=new ArrayList<>();
             List<TextPosition> sorted=new ArrayList<>(glyphs);
             Collections.sort(sorted,(a,b)->{
@@ -643,6 +733,7 @@ public final class PdfTranslationJob {
                 if(y!=0)return y;
                 return Float.compare(a.getX(),b.getX());
             });
+
             List<List<TextPosition>> rows=new ArrayList<>();
             for(TextPosition p:sorted){
                 float tol=Math.max(2f,p.getFontSizeInPt()*0.28f);
@@ -653,35 +744,48 @@ public final class PdfTranslationJob {
                     if(p.getY()-ry>tol+2f)break;
                     if(Math.abs(p.getY()-ry)<=tol){row=r;break;}
                 }
-                if(row==null){row=new ArrayList<>();rows.add(row);} row.add(p);
+                if(row==null){row=new ArrayList<>();rows.add(row);}
+                row.add(p);
             }
+
             for(List<TextPosition> row:rows){
                 Collections.sort(row,Comparator.comparing(TextPosition::getX));
                 List<TextPosition> piece=new ArrayList<>();
                 TextPosition prev=null;
                 for(TextPosition p:row){
                     if(prev!=null){
-                        float gap=p.getX()-(prev.getX()+prev.getWidth());
+                        float prevRight=prev.getX()+prev.getWidth();
+                        float gap=p.getX()-prevRight;
+
                         boolean crossesTwoColumns =
-                                (prev.getX()+prev.getWidth()) < pageWidth*0.49f
+                                prevRight < pageWidth*0.49f
                                 && p.getX() > pageWidth*0.51f
                                 && gap > 8f;
+
+                        boolean crossesVerticalGuide =
+                                gap > 1.5f
+                                && hasVerticalGuideBetween(prevRight,p.getX(),verticalGuides);
+
                         float threshold=Math.max(42f,prev.getFontSizeInPt()*3.5f);
-                        if((gap>threshold || crossesTwoColumns)&&!piece.isEmpty()){
-                            addLine(out,piece);piece=new ArrayList<>();
+                        if((gap>threshold||crossesTwoColumns||crossesVerticalGuide)&&!piece.isEmpty()){
+                            addLine(out,piece);
+                            piece=new ArrayList<>();
                         }
                     }
-                    piece.add(p);prev=p;
+                    piece.add(p);
+                    prev=p;
                 }
                 addLine(out,piece);
             }
+
             Collections.sort(out,(a,b)->{
-                int y=Float.compare(a.y,b.y);return y!=0?y:Float.compare(a.x,b.x);
+                int y=Float.compare(a.y,b.y);
+                return y!=0?y:Float.compare(a.x,b.x);
             });
             return out;
         }
 
-        private void addLine(List<LayoutLine> out,List<TextPosition> piece){
+        private void addLine(List<LayoutLine> out,List<TextPosition> piece){        private void addLine(List<LayoutLine> out,List<TextPosition> piece){
             if(piece==null||piece.isEmpty())return;
             StringBuilder s=new StringBuilder();float minX=Float.MAX_VALUE,minY=Float.MAX_VALUE;
             float maxX=0,maxY=0,size=0;TextPosition prev=null;
@@ -796,39 +900,89 @@ public final class PdfTranslationJob {
      */
     private static List<Object> filterNonTextTokens(List<Object> tokens){
         List<Object> kept=new ArrayList<>();
+        List<Object> pending=new ArrayList<>();
         boolean inText=false;
+
         for(Object token:tokens){
             if(!(token instanceof Operator)){
-                // Text operands are only meaningful when followed by a text
-                // operator. Keeping non-operator operands inside BT/ET would
-                // leave invalid/orphan tokens, so discard them.
-                if(!inText)kept.add(token);
+                if(inText) pending.add(token);
+                else kept.add(token);
                 continue;
             }
 
             String name=((Operator)token).getName();
 
             if("BT".equals(name)){
+                // A text object starts. Operands collected before the next
+                // operator belong to the operator that follows; discard them
+                // until that operator is classified.
                 inText=true;
+                pending.clear();
                 continue;
             }
+
             if("ET".equals(name)){
+                // Any remaining operands were text operands with no valid
+                // operator after them; discard them.
                 inText=false;
+                pending.clear();
                 continue;
             }
 
-            if(inText && isTextOnlyOperator(name)){
-                // Remove text positioning/state and text-showing operators.
-                // Graphics-state operators are intentionally preserved.
+            if(!inText){
+                kept.addAll(pending);
+                pending.clear();
+                kept.add(token);
                 continue;
             }
 
-            kept.add(token);
+            if(isGraphicsOperator(name)){
+                // Graphics operators are allowed/used by the publisher inside
+                // a BT...ET section. Keep their operands too, e.g.
+                // /CS0 cs 1 scn
+                kept.addAll(pending);
+                pending.clear();
+                kept.add(token);
+            }else{
+                // Text state, positioning and text showing operators are
+                // removed together with their operands.
+                pending.clear();
+            }
         }
+
+        // Never leave orphan operands from an incomplete text object.
         return kept;
     }
 
-    private static boolean isTextOnlyOperator(String name){
+    private static boolean isGraphicsOperator(String name){
+        // Graphics state
+        if("q".equals(name)||"Q".equals(name)||"cm".equals(name)
+                ||"w".equals(name)||"J".equals(name)||"j".equals(name)
+                ||"M".equals(name)||"d".equals(name)||"ri".equals(name)
+                ||"i".equals(name)||"gs".equals(name))return true;
+
+        // Device / calibrated / ICC / separation colors
+        if("CS".equals(name)||"cs".equals(name)
+                ||"SC".equals(name)||"SCN".equals(name)
+                ||"sc".equals(name)||"scn".equals(name)
+                ||"G".equals(name)||"g".equals(name)
+                ||"RG".equals(name)||"rg".equals(name)
+                ||"K".equals(name)||"k".equals(name))return true;
+
+        // Path construction and painting
+        if("m".equals(name)||"l".equals(name)||"c".equals(name)
+                ||"v".equals(name)||"y".equals(name)||"h".equals(name)
+                ||"re".equals(name)||"S".equals(name)||"s".equals(name)
+                ||"F".equals(name)||"f".equals(name)||"f*".equals(name)
+                ||"B".equals(name)||"B*".equals(name)
+                ||"b".equals(name)||"b*".equals(name)
+                ||"n".equals(name)||"W".equals(name)||"W*".equals(name))return true;
+
+        // External graphics
+        return "Do".equals(name)||"sh".equals(name);
+    }
+
+    private static boolean isTextOnlyOperator(String name){private static boolean isTextOnlyOperator(String name){
         // Text state operators
         if("Tc".equals(name)||"Tw".equals(name)||"Tz".equals(name)
                 ||"TL".equals(name)||"Tf".equals(name)||"Tr".equals(name)
