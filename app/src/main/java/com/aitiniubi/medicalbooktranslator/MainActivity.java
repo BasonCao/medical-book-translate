@@ -854,7 +854,7 @@ public class MainActivity extends Activity {
                 .setView(root)
                 .setPositiveButton("DỊCH / TIẾP TỤC",(d,w)->{
                     prefsHolder.edit().putInt("pdf_layout_mode",selected[0]).apply();
-                    updatePdfLayoutButton();
+                    updatePdfLayoutButtons();
                     translatePdf(providers,selected[0]==1);
                 })
                 .setNegativeButton("HỦY",null)
