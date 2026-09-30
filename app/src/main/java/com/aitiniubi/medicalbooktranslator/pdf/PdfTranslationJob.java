@@ -815,8 +815,8 @@ public final class PdfTranslationJob {
             super.processTextPosition(text);
         }
 
-        List<LayoutUnit> buildUnits(float pageWidth,Set<Float> verticalGuides){
-            List<LayoutLine> lines=buildLines(pageWidth,verticalGuides);
+        List<LayoutUnit> buildUnits(float pageWidth,List<TableRegion> tables){
+            List<LayoutLine> lines=buildLines(pageWidth,tables);
             if(lines.isEmpty())return new ArrayList<>();
             Map<Integer,List<LayoutLine>> columns=new HashMap<>();
             for(LayoutLine line:lines){
@@ -833,9 +833,9 @@ public final class PdfTranslationJob {
                 });
 
             List<LayoutUnit> ordered=new ArrayList<>();
-            addUnits(ordered,columns.get(-1),pageWidth,verticalGuides);
-            addUnits(ordered,columns.get(0),pageWidth,verticalGuides);
-            addUnits(ordered,columns.get(1),pageWidth,verticalGuides);
+            addUnits(ordered,columns.get(-1),pageWidth,tables);
+            addUnits(ordered,columns.get(0),pageWidth,tables);
+            addUnits(ordered,columns.get(1),pageWidth,tables);
 
             Collections.sort(ordered,(a,b)->{
                 int c=Integer.compare(a.column,b.column);
@@ -847,18 +847,19 @@ public final class PdfTranslationJob {
         }
 
         private void addUnits(List<LayoutUnit> out,List<LayoutLine> lines,
-                              float pageWidth,Set<Float> verticalGuides){
+                              float pageWidth,List<TableRegion> tables){
             if(lines==null||lines.isEmpty())return;
             LayoutUnit current=null;
             for(LayoutLine line:lines){
                 float verticalGap=current==null?Float.MAX_VALUE:line.y-current.bottom;
                 boolean guideBetween=current!=null
-                        && hasVerticalGuideBetween(current.x+current.width,line.x,verticalGuides);
+                        && crossesTableColumn(current.x+current.width,line.x,current.y,line.y,tables);
+                boolean rowBetween=current!=null
+                        && crossesTableRow(current.y,current.bottom,line.y,tables);
 
-                // A vertical vector divider on the same text row means this is
-                // a different table cell. Do not merge the two cells into one
-                // translated UNIT.
-                boolean newUnit=current==null || verticalGap>8f || guideBetween;
+                // A table divider means a new cell or a new table row. Elsewhere
+                // keep the paragraph-merging behavior used for normal prose.
+                boolean newUnit=current==null || verticalGap>8f || guideBetween || rowBetween;
 
                 if(newUnit){
                     if(current!=null)out.add(current);
@@ -876,10 +877,30 @@ public final class PdfTranslationJob {
             if(current!=null)out.add(current);
         }
 
-        private boolean hasVerticalGuideBetween(float left,float right,Set<Float> guides){
-            if(guides==null||guides.isEmpty()||right<=left+1f)return false;
-            for(Float g:guides){
-                if(g!=null && g>left+1.0f && g<right-0.5f)return true;
+        private boolean crossesTableColumn(float left,float right,float y1,float y2,
+                                      List<TableRegion> tables){
+            if(tables==null||tables.isEmpty()||right<=left+1f)return false;
+            float midY=(y1+y2)*0.5f;
+            for(TableRegion t:tables){
+                if(midY<t.top-3f||midY>t.bottom+3f)continue;
+                for(Float g:t.verticals){
+                    if(g!=null&&g>left+1f&&g<right-0.5f)return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean crossesTableRow(float y1,float bottom1,float y2,
+                                        List<TableRegion> tables){
+            if(tables==null||tables.isEmpty())return false;
+            float min=Math.min(bottom1,y2);
+            float max=Math.max(y1,y2);
+            float mid=(y1+y2)*0.5f;
+            for(TableRegion t:tables){
+                if(mid<t.top-3f||mid>t.bottom+3f)continue;
+                for(Float h:t.horizontals){
+                    if(h!=null&&h>min+0.8f&&h<max-0.3f)return true;
+                }
             }
             return false;
         }
@@ -895,7 +916,7 @@ public final class PdfTranslationJob {
             return l.x+l.width/2f<pageWidth/2f?0:1;
         }
 
-        List<LayoutLine> buildLines(float pageWidth,Set<Float> verticalGuides){
+        List<LayoutLine> buildLines(float pageWidth,List<TableRegion> tables){
             List<LayoutLine> out=new ArrayList<>();
             List<TextPosition> sorted=new ArrayList<>(glyphs);
             Collections.sort(sorted,(a,b)->{
@@ -932,9 +953,21 @@ public final class PdfTranslationJob {
                                 && p.getX() > pageWidth*0.51f
                                 && gap > 8f;
 
-                        boolean crossesVerticalGuide =
-                                gap > 1.5f
-                                && hasVerticalGuideBetween(prevRight,p.getX(),verticalGuides);
+                        boolean crossesVerticalGuide=false;
+                        float pieceLeft=piece.isEmpty()?prev.getX():piece.get(0).getX();
+                        float pieceY=piece.isEmpty()?prev.getY():piece.get(0).getY();
+                        if(tables!=null){
+                            for(TableRegion t:tables){
+                                if(pieceY<t.top-3f||pieceY>t.bottom+3f)continue;
+                                for(Float g:t.verticals){
+                                    if(g!=null&&g>pieceLeft+0.5f&&g<p.getX()-0.5f){
+                                        crossesVerticalGuide=true;
+                                        break;
+                                    }
+                                }
+                                if(crossesVerticalGuide)break;
+                            }
+                        }
 
                         float threshold=Math.max(42f,prev.getFontSizeInPt()*3.5f);
                         if((gap>threshold||crossesTwoColumns||crossesVerticalGuide)&&!piece.isEmpty()){
