@@ -9,6 +9,7 @@ import com.tom_roush.pdfbox.pdmodel.PDPageContentStream;
 import com.tom_roush.pdfbox.pdmodel.PDStream;
 import com.tom_roush.pdfbox.pdfparser.PDFStreamParser;
 import com.tom_roush.pdfbox.pdfwriter.ContentStreamWriter;
+import com.tom_roush.pdfbox.contentstream.operator.Operator;
 import com.tom_roush.pdfbox.text.TextPosition;
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle;
 import com.tom_roush.pdfbox.pdmodel.font.PDType0Font;
