@@ -34,6 +34,7 @@ public final class GlossaryManager {
     public static int importCsv(File workspace,InputStream input)throws IOException{
         if(!workspace.exists())workspace.mkdirs();
         File target=file(workspace),tmp=new File(workspace,"medical-glossary.tmp");
+        int count=0;
         try(BufferedReader r=new BufferedReader(new InputStreamReader(input,StandardCharsets.UTF_8));
             BufferedWriter w=new BufferedWriter(new OutputStreamWriter(new FileOutputStream(tmp),StandardCharsets.UTF_8))){
             String line;boolean first=true;
