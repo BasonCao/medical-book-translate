@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
 
         open.setOnClickListener(v->pick());
         analyze.setOnClickListener(v->analyze());
-        settings.setOnClickListener(v->{try{settings();}catch(Throwable t){showError(t);}});
+        settings.setOnClickListener(v->{try{settings();}catch(Exception e){showError(e);}});
         glossary.setOnClickListener(v->glossary());
         translate.setOnClickListener(v->translate());
         export.setOnClickListener(v->saveOutput());
