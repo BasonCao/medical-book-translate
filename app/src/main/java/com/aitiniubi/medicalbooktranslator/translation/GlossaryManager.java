@@ -23,7 +23,7 @@ public final class GlossaryManager {
                 if(first){first=false;if(line.startsWith("\uFEFF"))line=line.substring(1);}
                 if(line.trim().isEmpty())continue;
                 List<String> p=parseCsv(line); if(p.size()<2)continue;
-                String e=p.get(0).trim(),v=p.get(1).trim();
+                String e=p.get(0).trim(),v=p.get(1).trim().replace("\\\\n","\n");
                 if(e.isEmpty()||v.isEmpty()||e.equalsIgnoreCase("English"))continue;
                 out.add(new Term(e,v,p.size()>2?p.get(2).trim():"",p.size()>3?p.get(3).trim():""));
             }
