@@ -318,11 +318,11 @@ public class MainActivity extends Activity {
     }
 
     private void refreshGeminiCatalog(Spinner model,TextView note,Runnable refresh,String apiKey){
-        apiKey=apiKey==null?"":apiKey.trim();
-        if(apiKey.isEmpty()){new AlertDialog.Builder(this).setTitle("Chưa có Gemini API key").setMessage("Nhập Gemini API key trước, rồi bấm làm mới danh sách model.").setPositiveButton("OK",null).show();return;}
+        final String requestApiKey=apiKey==null?"":apiKey.trim();
+        if(requestApiKey.isEmpty()){new AlertDialog.Builder(this).setTitle("Chưa có Gemini API key").setMessage("Nhập Gemini API key trước, rồi bấm làm mới danh sách model.").setPositiveButton("OK",null).show();return;}
         Toast.makeText(this,"Đang lấy danh sách Gemini model từ Google…",Toast.LENGTH_SHORT).show();
         new Thread(()->{try{
-            HttpUrl url=HttpUrl.parse(GEMINI_MODELS_API).newBuilder().addQueryParameter("key",apiKey).build();
+            HttpUrl url=HttpUrl.parse(GEMINI_MODELS_API).newBuilder().addQueryParameter("key",requestApiKey).build();
             Request req=new Request.Builder().url(url).get().build();
             try(Response res=new OkHttpClient().newCall(req).execute()){
                 String body=res.body()==null?"":res.body().string();
