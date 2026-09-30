@@ -675,7 +675,7 @@ public class MainActivity extends Activity {
         if(providers.isEmpty()){settings();return;}
         if(workspace==null)workspace=new File(getFilesDir(),"translation_workspaces");
         if(pdfMode){
-            translatePdf(providers);
+            choosePdfLayoutAndTranslate(providers);
             return;
         }
         File out=new File(workspace,"translated-final.epub");
@@ -701,19 +701,37 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void translatePdf(List<TranslationRouter.Provider> providers){
+    private void choosePdfLayoutAndTranslate(List<TranslationRouter.Provider> providers){
+        String[] choices={
+                "📰 Giữ bố cục 2 cột như PDF gốc",
+                "📄 Chuyển sang bố cục 1 cột"
+        };
+        int saved=prefsHolder.getInt("pdf_layout_mode",0);
+        final int[] selected={Math.max(0,Math.min(saved,1))};
+        new AlertDialog.Builder(this)
+                .setTitle("Bố cục PDF đầu ra")
+                .setSingleChoiceItems(choices,selected[0],(d,which)->selected[0]=which)
+                .setMessage("2 cột: giữ hình, bảng và bố cục gần PDF gốc.\n1 cột: dễ đọc hơn nhưng có thể thay đổi vị trí hình/bảng.")
+                .setPositiveButton("DỊCH / TIẾP TỤC",(d,w)->{
+                    prefsHolder.edit().putInt("pdf_layout_mode",selected[0]).apply();
+                    translatePdf(providers,selected[0]==1);
+                })
+                .setNegativeButton("HỦY",null).show();
+    }
+
+    private void translatePdf(List<TranslationRouter.Provider> providers,boolean singleColumn){
         File out=new File(workspace,"translated-final.pdf");
         translating=true;translate.setEnabled(false);reset.setEnabled(false);export.setEnabled(false);
         progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
         report.setText("📄 Dịch PDF text layer. PDF scan/image-only không được hỗ trợ.");
-        PdfTranslationJob.run(this,selectedFile,out,workspace,providers,new PdfTranslationJob.Listener(){
+        PdfTranslationJob.run(this,selectedFile,out,workspace,providers,singleColumn,new PdfTranslationJob.Listener(){
             public void onProgress(int d,int t,int page,String info){
                 int p=t<=0?0:(int)(100.0*d/t);
                 runOnUiThread(()->{progress.setProgress(p);status.setText("PDF: "+d+"/"+t+" trang | trang "+page);report.setText(info+"\n"+d+"/"+t+" trang");});
             }
             public void onDone(File f){
                 lastOutput=f;
-                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch PDF hoàn tất.\n"+f.getAbsolutePath()+"\n\nLưu ý: bản V1.7-PDF giữ số trang/kích thước trang nhưng dựng lại phần text; không giữ nguyên bố cục đồ họa 1:1.");});
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch PDF hoàn tất.\n"+f.getAbsolutePath()+"\n\nBố cục: "+(singleColumn?"1 cột":"2 cột như PDF gốc")+" . Hình ảnh/bảng được giữ theo chế độ đã chọn.");});
             }
             public void onPaused(File draft,int d,int t,Exception reason){
                 lastOutput=draft;
