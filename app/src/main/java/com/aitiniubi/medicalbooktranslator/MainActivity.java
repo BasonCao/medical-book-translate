@@ -794,10 +794,12 @@ public class MainActivity extends Activity {
 
     private void choosePdfLayoutAndTranslate(List<TranslationRouter.Provider> providers){
         final int saved=prefsHolder.getInt("pdf_layout_mode",0);
-        final int initial=Math.max(0,Math.min(saved,1));
+        final int[] selected={Math.max(0,Math.min(saved,1))};
 
-        // Explicit RadioGroup: some Android AlertDialog implementations do not render
-        // setSingleChoiceItems() correctly when a message is also supplied.
+        // Use ordinary Buttons instead of RadioButton/RadioGroup. On some Android
+        // themes/devices the RadioButton children can collapse/not render inside
+        // a programmatically created AlertDialog. The two large buttons are always
+        // visible and also show the current selection explicitly.
         LinearLayout root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad=(int)(16*getResources().getDisplayMetrics().density);
@@ -805,52 +807,54 @@ public class MainActivity extends Activity {
 
         TextView hint=new TextView(this);
         hint.setText("Chọn bố cục PDF sau khi dịch:");
-        hint.setTextSize(15);
-        hint.setPadding(0,pad/2,pad/4,pad/2);
+        hint.setTextSize(16);
+        hint.setTextColor(0xFF555555);
+        hint.setPadding(0,pad/2,0,pad/2);
         root.addView(hint,new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        RadioGroup group=new RadioGroup(this);
-        group.setOrientation(RadioGroup.VERTICAL);
+        Button keep=new Button(this);
+        Button one=new Button(this);
+        keep.setAllCaps(false);
+        one.setAllCaps(false);
+        keep.setTextSize(15);
+        one.setTextSize(15);
+        keep.setMinHeight((int)(52*getResources().getDisplayMetrics().density));
+        one.setMinHeight((int)(52*getResources().getDisplayMetrics().density));
 
-        RadioButton keep=new RadioButton(this);
-        keep.setId(View.generateViewId());
-        keep.setText("📰 Giữ nguyên bố cục PDF gốc (2 cột)");
-        keep.setTextSize(16);
-        keep.setPadding(0,pad/3,0,pad/3);
-
-        RadioButton one=new RadioButton(this);
-        one.setId(View.generateViewId());
-        one.setText("📄 Chuyển sang bố cục 1 cột");
-        one.setTextSize(16);
-        one.setPadding(0,pad/3,0,pad/3);
-
-        group.addView(keep,new RadioGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
-        group.addView(one,new RadioGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
-        group.check(initial==0?keep.getId():one.getId());
+        LinearLayout.LayoutParams choiceLp=new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+        choiceLp.setMargins(0,0,0,pad/2);
+        root.addView(keep,choiceLp);
+        LinearLayout.LayoutParams choiceLp2=new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+        choiceLp2.setMargins(0,0,0,pad/4);
+        root.addView(one,choiceLp2);
 
         TextView note=new TextView(this);
-        note.setText("Giữ nguyên: cố gắng giữ vị trí hình, bảng, màu nền và cấu trúc 2 cột gần PDF gốc.\n"
-                +"1 cột: dồn phần văn bản thành một cột để đọc trên điện thoại; vị trí hình/bảng có thể thay đổi.");
+        note.setText("2 cột: giữ bố cục, hình và bảng gần PDF gốc.\n"
+                +"1 cột: dồn văn bản thành một cột để đọc trên điện thoại; vị trí hình/bảng có thể thay đổi.");
         note.setTextSize(13);
-        note.setPadding(0,pad/2,0,0);
+        note.setTextColor(0xFF666666);
+        note.setPadding(0,pad/3,0,pad/2);
         root.addView(note,new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        final int[] selected={initial};
-        group.setOnCheckedChangeListener((g,checkedId)->{
-            if(checkedId==one.getId())selected[0]=1;
-            else if(checkedId==keep.getId())selected[0]=0;
-        });
+        Runnable refreshChoices=()->{
+            keep.setText((selected[0]==0?"✓ ":"") + "📰 Giữ nguyên bố cục PDF gốc (2 cột)");
+            one.setText((selected[0]==1?"✓ ":"") + "📄 Chuyển sang bố cục 1 cột");
+        };
+        refreshChoices.run();
+
+        keep.setOnClickListener(v->{selected[0]=0;refreshChoices.run();});
+        one.setOnClickListener(v->{selected[0]=1;refreshChoices.run();});
 
         new AlertDialog.Builder(this)
                 .setTitle("Bố cục PDF đầu ra")
                 .setView(root)
                 .setPositiveButton("DỊCH / TIẾP TỤC",(d,w)->{
                     prefsHolder.edit().putInt("pdf_layout_mode",selected[0]).apply();
-                    updatePdfLayoutButtons();
+                    updatePdfLayoutButton();
                     translatePdf(providers,selected[0]==1);
                 })
                 .setNegativeButton("HỦY",null)
