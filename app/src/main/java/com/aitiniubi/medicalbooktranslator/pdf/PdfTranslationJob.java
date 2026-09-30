@@ -251,11 +251,11 @@ public final class PdfTranslationJob {
 
             List<LayoutUnit> ordered=new ArrayList<>();
             // Header/full-width material comes first.
-            addUnits(ordered,columns.get(-1));
+            addUnits(ordered,columns.get(-1),pageWidth);
             // Then left column, then right column. This matches normal medical
             // journal reading order for the target two-column layouts.
-            addUnits(ordered,columns.get(0));
-            addUnits(ordered,columns.get(1));
+            addUnits(ordered,columns.get(0),pageWidth);
+            addUnits(ordered,columns.get(1),pageWidth);
             Collections.sort(ordered,(a,b)->{
                 // Preserve column order, but keep header units at the top.
                 int c=Integer.compare(a.column,b.column);
@@ -265,27 +265,30 @@ public final class PdfTranslationJob {
             return ordered;
         }
 
-        private void addUnits(List<LayoutUnit> out,List<LayoutLine> lines){
+        private void addUnits(List<LayoutUnit> out,List<LayoutLine> lines,float pageWidth){
             if(lines==null||lines.isEmpty())return;
             LayoutUnit current=null;
             for(LayoutLine line:lines){
                 if(current==null || line.y-current.bottom>Math.max(14f,line.height*1.7f)){
                     if(current!=null)out.add(current);
                     current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
-                            columnOf(line));
+                            columnOf(line,pageWidth);
                 }else{
                     current.source += " " + line.source;
                     float right=Math.max(current.x+current.width,line.x+line.width);
                     current.width=right-current.x;
                     current.height=Math.max(current.height,line.y+line.height-current.y);
+                    current.bottom=Math.max(current.bottom,line.y+line.height);
                     current.fontSize=Math.min(current.fontSize,line.fontSize>0?line.fontSize:current.fontSize);
                 }
             }
             if(current!=null)out.add(current);
         }
 
-        private int columnOf(LayoutLine l){
-            return l.x+l.width/2f<300f?0:1;
+        private int columnOf(LayoutLine l,float pageWidth){
+            float right=l.x+l.width;
+            if(l.x<pageWidth*0.18f && right>pageWidth*0.52f)return -1;
+            return l.x+l.width/2f<pageWidth/2f?0:1;
         }
 
         List<LayoutLine> buildLines(){
@@ -372,23 +375,16 @@ public final class PdfTranslationJob {
     private static Map<Integer,String> parseUnitMap(String raw,int count)throws IOException{
         Map<Integer,String> out=new HashMap<>();
         if(raw==null)return out;
-        java.util.regex.Pattern p=java.util.regex.Pattern.compile("\\\\[\\\\[\\\\[UNIT_(\\\\d+)\\\\]\\\\]\\\\]\\\\s*",java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Pattern p=java.util.regex.Pattern.compile("\\[\\[\\[UNIT_(\\d+)\\]\\]\\]\\s*",java.util.regex.Pattern.CASE_INSENSITIVE);
         java.util.regex.Matcher m=p.matcher(raw);
-        List<Integer> ids=new ArrayList<>();List<Integer> starts=new ArrayList<>();
-        while(m.find()){ids.add(Integer.parseInt(m.group(1)));starts.add(m.end());}
+        List<Integer> ids=new ArrayList<>();List<Integer> contentStarts=new ArrayList<>();List<Integer> markerStarts=new ArrayList<>();
+        while(m.find()){ids.add(Integer.parseInt(m.group(1)));contentStarts.add(m.end());markerStarts.add(m.start());}
         for(int i=0;i<ids.size();i++){
             int id=ids.get(i);if(id<0||id>=count)continue;
-            int end=i+1<starts.size()?mStart(raw,starts.get(i+1),ids.get(i+1)):raw.length();
-            String v=raw.substring(starts.get(i),end).trim();
-            out.put(id,v);
+            int end=i+1<markerStarts.size()?markerStarts.get(i+1):raw.length();
+            out.put(id,raw.substring(contentStarts.get(i),end).trim());
         }
         return out;
-    }
-
-    private static int mStart(String raw,int after,int nextId){
-        String marker="[[[UNIT_"+nextId+"]]]";
-        int idx=raw.lastIndexOf(marker,after);
-        return idx>=0?idx:after;
     }
 
     private static List<FontSlot> loadFonts(PDDocument out)throws IOException{
