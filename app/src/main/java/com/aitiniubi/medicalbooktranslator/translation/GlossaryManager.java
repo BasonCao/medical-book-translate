@@ -32,11 +32,13 @@ public final class GlossaryManager {
     }
 
     public static int importCsv(File workspace,InputStream input)throws IOException{
-        if(!workspace.exists())workspace.mkdirs();
-        File target=file(workspace),tmp=new File(workspace,"medical-glossary.tmp");
-        int count=0;
-        try(BufferedReader r=new BufferedReader(new InputStreamReader(input,StandardCharsets.UTF_8));
-            BufferedWriter w=new BufferedWriter(new OutputStreamWriter(new FileOutputStream(tmp),StandardCharsets.UTF_8))){
+        if(!workspace.exists()&&!workspace.mkdirs())throw new IOException("Không tạo được workspace glossary.");
+        // Import is additive: existing terms are kept. A duplicate English term
+        // (case-insensitive, trimmed) is skipped instead of replacing the old row.
+        LinkedHashMap<String,Term> merged=new LinkedHashMap<>();
+        for(Term t:load(workspace))merged.put(normalizeKey(t.english),t);
+        int added=0;
+        try(BufferedReader r=new BufferedReader(new InputStreamReader(input,StandardCharsets.UTF_8))){
             String line;boolean first=true;
             while((line=r.readLine())!=null){
                 if(first){first=false;if(line.startsWith("\uFEFF"))line=line.substring(1);}
@@ -44,12 +46,34 @@ public final class GlossaryManager {
                 List<String> p=parseCsv(line);if(p.size()<2)continue;
                 String e=p.get(0).trim(),v=p.get(1).trim();
                 if(e.isEmpty()||v.isEmpty()||e.equalsIgnoreCase("English"))continue;
-                w.write(csv(e)+","+csv(v)+","+csv(p.size()>2?p.get(2).trim():"")+","+csv(p.size()>3?p.get(3).trim():""));w.newLine();count++;
+                String key=normalizeKey(e);
+                if(merged.containsKey(key))continue;
+                merged.put(key,new Term(e,v,p.size()>2?p.get(2).trim():"",p.size()>3?p.get(3).trim():""));
+                added++;
             }
         }
-        if(target.exists())target.delete();
+        save(workspace,new ArrayList<>(merged.values()));
+        return added;
+    }
+
+    public static void save(File workspace,List<Term> terms)throws IOException{
+        if(!workspace.exists()&&!workspace.mkdirs())throw new IOException("Không tạo được workspace glossary.");
+        File target=file(workspace),tmp=new File(workspace,"medical-glossary.tmp");
+        try(BufferedWriter w=new BufferedWriter(new OutputStreamWriter(new FileOutputStream(tmp),StandardCharsets.UTF_8))){
+            for(Term t:terms){
+                if(t==null||t.english==null||t.vietnamese==null)continue;
+                String e=t.english.trim(),v=t.vietnamese.trim();
+                if(e.isEmpty()||v.isEmpty())continue;
+                w.write(csv(e)+","+csv(v)+","+csv(t.category==null?"":t.category.trim())+","+csv(t.note==null?"":t.note.trim()));
+                w.newLine();
+            }
+        }
+        if(target.exists()&&!target.delete())throw new IOException("Không thể thay thế glossary cũ.");
         if(!tmp.renameTo(target))throw new IOException("Không thể lưu glossary.");
-        return count;
+    }
+
+    private static String normalizeKey(String s){
+        return s==null?"":s.trim().toLowerCase(Locale.US);
     }
 
     public static String promptTerms(String text,List<Term> terms){
