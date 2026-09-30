@@ -272,7 +272,7 @@ public final class PdfTranslationJob {
                 if(current==null || line.y-current.bottom>Math.max(14f,line.height*1.7f)){
                     if(current!=null)out.add(current);
                     current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
-                            columnOf(line,pageWidth);
+                            columnOf(line,pageWidth));
                 }else{
                     current.source += " " + line.source;
                     float right=Math.max(current.x+current.width,line.x+line.width);
