@@ -172,14 +172,67 @@ public final class TranslationJob {
             t=clean(TranslationRouter.translate(prompt.toString(),context,providers));
             reason=validationReason(u,t);
         }
-        if(reason!=null)
+        if(reason!=null){
+            // Final fallback: translate each source sentence independently.
+            // This prevents a model from silently dropping one or more sentences
+            // after the normal whole-unit retries.
+            String fallback=translateBySentences(u,context,providers);
+            String fallbackReason=validationReason(u,fallback);
+            if(fallbackReason==null)return fallback;
             throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
-                    +" sau 3 lần thử: "+reason+". App đã dừng để tránh xuất EPUB thiếu nội dung.");
+                    +" sau 3 lần thử + fallback từng câu: "+fallbackReason
+                    +". App đã dừng để tránh xuất EPUB thiếu nội dung.");
+        }
         return t;
     }
 
     private static boolean looksComplete(Unit u,String translation){
         return validationReason(u,translation)==null;
+    }
+
+    private static String translateBySentences(Unit u,String context,
+                                                    List<TranslationRouter.Provider> providers)
+            throws Exception{
+        String src=strip(u.inner);
+        List<String> sentences=splitSentences(src);
+        if(sentences.size()<2) return "";
+
+        StringBuilder prompt=new StringBuilder();
+        prompt.append("Translate EVERY sentence below into professional Vietnamese. ")
+              .append("Return ONLY a JSON array of strings, in exactly the same order and count. ")
+              .append("Do not omit, merge, summarize, or reorder any sentence. ")
+              .append("Preserve numbers, ranges, abbreviations, gene names, units and citation markers. ")
+              .append("This is a recovery pass because the previous translation omitted sentence(s).\\n");
+        for(int i=0;i<sentences.size();i++){
+            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\\n");
+        }
+
+        String response=TranslationRouter.translate(prompt.toString(),context,providers).trim();
+        int a=response.indexOf('['),b=response.lastIndexOf(']');
+        if(a<0||b<=a)throw new IOException("Fallback từng câu không trả về JSON.");
+        JSONArray arr=new JSONArray(response.substring(a,b+1));
+        if(arr.length()!=sentences.size())
+            throw new IOException("Fallback từng câu trả về "+arr.length()+"/"+sentences.size()+" câu.");
+        StringBuilder out=new StringBuilder();
+        for(int i=0;i<arr.length();i++){
+            String t=arr.optString(i,"").trim();
+            if(t.isEmpty())throw new IOException("Fallback từng câu có câu trống.");
+            if(i>0)out.append(" ");
+            out.append(t);
+        }
+        return out.toString();
+    }
+
+    private static List<String> splitSentences(String s){
+        List<String> out=new ArrayList<>();
+        if(s==null)return out;
+        Matcher m=Pattern.compile(".*?(?:[.!?](?=\\s|$)|$)",Pattern.DOTALL).matcher(s.trim());
+        while(m.find()){
+            String x=m.group().trim();
+            if(!x.isEmpty())out.add(x);
+            if(m.end()==s.trim().length())break;
+        }
+        return out;
     }
 
     private static String validationReason(Unit u,String translation){
