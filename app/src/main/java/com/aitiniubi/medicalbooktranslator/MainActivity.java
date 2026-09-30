@@ -520,7 +520,8 @@ public class MainActivity extends Activity {
             }
         }
 
-        Runnable updateProfileButtons=()->{
+        final Runnable[] updateProfileButtons=new Runnable[1];
+        updateProfileButtons[0]=()->{
             profileBar.removeAllViews();
             for(int i=1;i<=10;i++){
                 final int slot=i;
@@ -533,7 +534,7 @@ public class MainActivity extends Activity {
                     String p=profileProvider(slot);
                     provider.setSelection(Math.max(0,indexOf(PROVIDERS,p)));
                     loadProfileFields(slot,p,provider,model,customModel,ep,key,note,keyLink,refreshGemini);
-                    updateProfileButtons.run();
+                    updateProfileButtons[0].run();
                 });
                 profileBar.addView(b,new LinearLayout.LayoutParams(-2,-2));
             }
@@ -618,7 +619,7 @@ public class MainActivity extends Activity {
                     .putString(profileKey(slot,"endpoint"),p.equals(PROVIDERS[5])?ep.getText().toString().trim():"")
                     .putString(profileKey(slot,"model"),selectedModel)
                     .putString(profileKey(slot,"key"),enteredKey).apply();
-            updateProfileButtons.run();
+            updateProfileButtons[0].run();
             status.setText((freePool.isChecked()?"FREE POOL":"ALL PROVIDERS")+" | Đã lưu Cấu hình "+slot+" | "+p+" / "+selectedModel);
             Toast.makeText(this,"Đã lưu Cấu hình "+slot+". Chạm nút cấu hình để nạp lại.",Toast.LENGTH_SHORT).show();
             refresh.run();
@@ -633,7 +634,7 @@ public class MainActivity extends Activity {
                         prefsHolder.edit().remove(profileKey(slot,"provider")).remove(profileKey(slot,"endpoint"))
                                 .remove(profileKey(slot,"model")).remove(profileKey(slot,"key")).apply();
                         loadProfileFields(slot,PROVIDERS[0],provider,model,customModel,ep,key,note,keyLink,refreshGemini);
-                        updateProfileButtons.run();refresh.run();
+                        updateProfileButtons[0].run();refresh.run();
                     }).setNegativeButton("Hủy",null).show();
         });
 
