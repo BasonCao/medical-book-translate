@@ -774,17 +774,15 @@ public class MainActivity extends Activity {
         final int saved=prefsHolder.getInt("pdf_layout_mode",0);
         final int initial=Math.max(0,Math.min(saved,1));
 
-        // Do not use setMessage() together with setSingleChoiceItems(): on some Android
-        // versions the message consumes the dialog content area and the radio choices
-        // are not rendered. Use an explicit RadioGroup so the two PDF layout choices
-        // are always visible and tappable.
+        // Explicit RadioGroup: some Android AlertDialog implementations do not render
+        // setSingleChoiceItems() correctly when a message is also supplied.
         LinearLayout root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad=(int)(16*getResources().getDisplayMetrics().density);
         root.setPadding(pad,0,pad,0);
 
         TextView hint=new TextView(this);
-        hint.setText("Chọn cách dàn trang cho PDF sau khi dịch:");
+        hint.setText("Chọn bố cục PDF sau khi dịch:");
         hint.setTextSize(15);
         hint.setPadding(0,pad/2,pad/4,pad/2);
         root.addView(hint,new LinearLayout.LayoutParams(
@@ -794,11 +792,13 @@ public class MainActivity extends Activity {
         group.setOrientation(RadioGroup.VERTICAL);
 
         RadioButton keep=new RadioButton(this);
+        keep.setId(View.generateViewId());
         keep.setText("📰 Giữ nguyên bố cục PDF gốc (2 cột)");
         keep.setTextSize(16);
         keep.setPadding(0,pad/3,0,pad/3);
 
         RadioButton one=new RadioButton(this);
+        one.setId(View.generateViewId());
         one.setText("📄 Chuyển sang bố cục 1 cột");
         one.setTextSize(16);
         one.setPadding(0,pad/3,0,pad/3);
@@ -809,26 +809,19 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
         group.check(initial==0?keep.getId():one.getId());
 
-        // RadioButton IDs are needed for RadioGroup.check().
-        if(keep.getId()==View.NO_ID)keep.setId(View.generateViewId());
-        if(one.getId()==View.NO_ID)one.setId(View.generateViewId());
-        group.removeAllViews();
-        group.addView(keep,new RadioGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
-        group.addView(one,new RadioGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
-        group.check(initial==0?keep.getId():one.getId());
-
         TextView note=new TextView(this);
-        note.setText("Giữ nguyên: cố gắng giữ vị trí hình, bảng, màu nền và cấu trúc 2 cột gần PDF gốc.\\n"
-                +"1 cột: dồn phần văn bản thành một cột, phù hợp khi đọc trên điện thoại; vị trí hình/bảng có thể thay đổi.");
+        note.setText("Giữ nguyên: cố gắng giữ vị trí hình, bảng, màu nền và cấu trúc 2 cột gần PDF gốc.\n"
+                +"1 cột: dồn phần văn bản thành một cột để đọc trên điện thoại; vị trí hình/bảng có thể thay đổi.");
         note.setTextSize(13);
         note.setPadding(0,pad/2,0,0);
         root.addView(note,new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
 
         final int[] selected={initial};
-        group.setOnCheckedChangeListener((g,checkedId)->selected[0]=(checkedId==one.getId()?1:0));
+        group.setOnCheckedChangeListener((g,checkedId)->{
+            if(checkedId==one.getId())selected[0]=1;
+            else if(checkedId==keep.getId())selected[0]=0;
+        });
 
         new AlertDialog.Builder(this)
                 .setTitle("Bố cục PDF đầu ra")
@@ -841,7 +834,6 @@ public class MainActivity extends Activity {
                 .setNegativeButton("HỦY",null)
                 .show();
     }
-
     private void translatePdf(List<TranslationRouter.Provider> providers,boolean singleColumn){
         File out=new File(workspace,"translated-final.pdf");
         translating=true;translate.setEnabled(false);reset.setEnabled(false);export.setEnabled(false);
