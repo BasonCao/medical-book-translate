@@ -387,6 +387,26 @@ public final class PdfTranslationJob {
         return out;
     }
 
+    /** Remove only BT...ET text sections; images and vector graphics remain untouched. */
+    private static void stripTextOperators(PDDocument doc,PDPage page)throws IOException{
+        PDFStreamParser parser=new PDFStreamParser(page);parser.parse();
+        List<Object> kept=new ArrayList<>();boolean inText=false;
+        for(Object token:parser.getTokens()){
+            if(token instanceof Operator){
+                String name=((Operator)token).getName();
+                if("BT".equals(name)){inText=true;continue;}
+                if("ET".equals(name)){inText=false;continue;}
+                if(inText)continue;
+            }else if(inText)continue;
+            kept.add(token);
+        }
+        PDStream replacement=new PDStream(doc);
+        try(OutputStream os=replacement.createOutputStream()){
+            new ContentStreamWriter(os).writeTokens(kept);
+        }
+        page.setContents(replacement);
+    }
+
     private static List<FontSlot> loadFonts(PDDocument out)throws IOException{
         List<FontSlot> fonts=new ArrayList<>();
 
