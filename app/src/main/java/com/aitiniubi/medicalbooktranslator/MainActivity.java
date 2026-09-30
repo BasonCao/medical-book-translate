@@ -66,12 +66,14 @@ public class MainActivity extends Activity {
         analyze=findViewById(R.id.analyzeButton);
         translate=findViewById(R.id.translateButton);
         Button settings=findViewById(R.id.settingsButton);
+        Button glossary=findViewById(R.id.glossaryButton);
         export=findViewById(R.id.exportButton);
         reset=findViewById(R.id.resetButton);
 
         open.setOnClickListener(v->pick());
         analyze.setOnClickListener(v->analyze());
         settings.setOnClickListener(v->settings());
+        glossary.setOnClickListener(v->glossary());
         translate.setOnClickListener(v->translate());
         export.setOnClickListener(v->saveOutput());
         reset.setOnClickListener(v->resetProgress());
@@ -106,6 +108,18 @@ public class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int r,int c,Intent d){
         super.onActivityResult(r,c,d);
+        if(r==12&&c==RESULT_OK&&d!=null){
+            try{
+                Uri u=d.getData();
+                InputStream in=getContentResolver().openInputStream(u);
+                if(in==null)throw new IOException("Không mở được file CSV.");
+                int n=GlossaryManager.importCsv(workspace,in);in.close();
+                List<GlossaryManager.Term> terms=GlossaryManager.load(workspace);
+                Toast.makeText(this,"Đã nạp "+n+" thuật ngữ. Tổng hiện tại: "+terms.size(),Toast.LENGTH_LONG).show();
+                report.setText("📚 Glossary: "+terms.size()+" thuật ngữ đang được áp dụng khi dịch batch.");
+            }catch(Exception e){showError(e);}
+            return;
+        }
         if(r==11&&c==RESULT_OK&&d!=null){
             try{
                 if(lastOutput==null||!lastOutput.isFile())throw new IOException(pdfMode?"Chưa có PDF draft để xuất.":"Chưa có EPUB draft để xuất.");
@@ -336,6 +350,31 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->{refresh.run();note.setText("Gemini catalog đã cập nhật từ Google: "+found.size()+" model text hỗ trợ generateContent.");Toast.makeText(this,"Đã cập nhật "+found.size()+" Gemini model.",Toast.LENGTH_LONG).show();});
             }
         }catch(Exception e){runOnUiThread(()->showError(e));}}).start();
+    }
+
+    private void glossary(){
+        if(workspace==null){
+            new AlertDialog.Builder(this).setTitle("Thuật ngữ chuyên ngành")
+                    .setMessage("Hãy chọn EPUB/PDF trước để tạo workspace cho glossary.")
+                    .setPositiveButton("OK",null).show(); return;
+        }
+        List<GlossaryManager.Term> terms=GlossaryManager.load(workspace);
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(32,8,32,8);
+        TextView info=new TextView(this);
+        info.setText("Glossary hiện tại: "+terms.size()+" thuật ngữ\\n\\nCSV mẫu gồm: English,Vietnamese,Category,Note\\nVí dụ: nuchal translucency,độ mờ da gáy,Ultrasound,NT");
+        info.setPadding(0,0,0,16);
+        Button importBtn=new Button(this);importBtn.setText("📥 NẠP CSV THUẬT NGỮ");
+        Button viewBtn=new Button(this);viewBtn.setText("🔎 XEM THUẬT NGỮ");
+        box.addView(info);box.addView(importBtn);box.addView(viewBtn);
+        AlertDialog dlg=new AlertDialog.Builder(this).setTitle("📚 Thuật ngữ chuyên ngành").setView(box).setNegativeButton("Đóng",null).create();
+        importBtn.setOnClickListener(v->{Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("text/*");i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"text/csv","text/comma-separated-values","application/csv","text/plain"});i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,12);dlg.dismiss();});
+        viewBtn.setOnClickListener(v->{
+            List<GlossaryManager.Term> now=GlossaryManager.load(workspace);StringBuilder s=new StringBuilder();
+            for(int i=0;i<now.size()&&i<200;i++)s.append(now.get(i).english).append(" → ").append(now.get(i).vietnamese).append("\\n");
+            if(now.size()>200)s.append("\\n... còn ").append(now.size()-200).append(" thuật ngữ");
+            new AlertDialog.Builder(this).setTitle("Glossary ("+now.size()+")").setMessage(s.length()==0?"Chưa có thuật ngữ.":s.toString()).setPositiveButton("OK",null).show();
+        });
+        dlg.show();
     }
 
     private void settings(){
