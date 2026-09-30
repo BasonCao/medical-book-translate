@@ -1,7 +1,7 @@
 plugins { id 'com.android.application' }
 
 android { namespace 'com.aitiniubi.medicalbooktranslator'; compileSdk 35
-    defaultConfig { applicationId 'com.aitiniubi.medicalbooktranslator'; minSdk 26; targetSdk 35; versionCode 18; versionName '1.10.2' }
+    defaultConfig { applicationId 'com.aitiniubi.medicalbooktranslator'; minSdk 26; targetSdk 35; versionCode 19; versionName '1.10.3' }
 }
 
 dependencies {
