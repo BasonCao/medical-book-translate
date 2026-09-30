@@ -154,8 +154,9 @@ public final class TranslationJob {
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
         String t=clean(candidate);
+        String reason=validationReason(u,t);
         for(int attempt=0;attempt<3;attempt++){
-            if(looksComplete(u,t))return t;
+            if(reason==null)return t;
 
             StringBuilder prompt=new StringBuilder();
             prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
@@ -163,34 +164,40 @@ public final class TranslationJob {
                   .append("Preserve every HTML/XML tag and attribute exactly. ")
                   .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
                   .append("Return ONLY the translated HTML fragment. ")
-                  .append("If the source contains multiple sentences, translate all of them.\\n\\n")
+                  .append("If the source contains multiple sentences, translate all of them.\n")
+                  .append("The previous output failed validation for this reason: ").append(reason).append("\n")
+                  .append("Correct that problem in the new output.\n\n")
                   .append(u.inner);
 
             t=clean(TranslationRouter.translate(prompt.toString(),context,providers));
+            reason=validationReason(u,t);
         }
-        if(!looksComplete(u,t))
+        if(reason!=null)
             throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
-                    +" sau 3 lần thử; app đã dừng để tránh xuất EPUB thiếu nội dung.");
+                    +" sau 3 lần thử: "+reason+". App đã dừng để tránh xuất EPUB thiếu nội dung.");
         return t;
     }
 
     private static boolean looksComplete(Unit u,String translation){
-        if(blank(translation))return false;
+        return validationReason(u,translation)==null;
+    }
+
+    private static String validationReason(Unit u,String translation){
+        if(blank(translation))return "AI trả về nội dung trống";
         String src=strip(u.inner);
         String dst=strip(translation);
-        if(src.length()<12)return true;
+        if(src.length()<12)return null;
 
-        // A translation that is drastically shorter than the source is a strong
-        // signal that the model omitted one or more sentences.
-        if(src.length()>=160 && dst.length()<Math.max(45,src.length()*0.38))return false;
+        if(src.length()>=160 && dst.length()<Math.max(45,src.length()*0.38))
+            return "bản dịch ngắn bất thường so với nội dung nguồn";
 
         int srcSent=sentenceCount(src);
         int dstSent=sentenceCount(dst);
-        if(srcSent>=3 && dstSent<srcSent-1)return false;
-        if(srcSent>=2 && dstSent<1)return false;
+        if(srcSent>=3 && dstSent<srcSent-1)
+            return "thiếu câu (nguồn "+srcSent+" câu, bản dịch "+dstSent+" câu)";
+        if(srcSent>=2 && dstSent<1)
+            return "không có câu trong bản dịch";
 
-        // Preserve important numeric/citation tokens. A missing dosage, rate,
-        // gestational age, gene coordinate, etc. is not acceptable.
         List<String> nums=importantTokens(src);
         if(!nums.isEmpty()){
             Map<String,Integer> have=new HashMap<>();
@@ -202,25 +209,24 @@ public final class TranslationJob {
                 total+=e.getValue();
                 covered+=Math.min(e.getValue(),have.getOrDefault(e.getKey(),0));
             }
-            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))return false;
+            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))
+                return "thiếu số liệu/citation quan trọng ("+covered+"/"+total+" token được giữ lại)";
         }
 
-        // Reject obvious untranslated UI headings/prose.
         String low=dst.toLowerCase(Locale.US);
         if(src.toLowerCase(Locale.US).equals("feature")
-                &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return false;
+                &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return "heading Feature chưa được dịch";
         if(src.toLowerCase(Locale.US).equals("renal")
-                &&!low.contains("thận"))return false;
+                &&!low.contains("thận"))return "heading Renal chưa được dịch";
         if(src.toLowerCase(Locale.US).equals("seizure")
-                &&!low.contains("co giật"))return false;
+                &&!low.contains("co giật"))return "heading Seizure chưa được dịch";
         if(src.toLowerCase(Locale.US).equals("prenatal")
-                &&!low.contains("trước sinh"))return false;
+                &&!low.contains("trước sinh"))return "heading Prenatal chưa được dịch";
         if(src.toLowerCase(Locale.US).equals("definition")
-                &&!low.contains("định nghĩa"))return false;
+                &&!low.contains("định nghĩa"))return "heading Definition chưa được dịch";
         if(src.toLowerCase(Locale.US).equals("classic signs")
-                &&!low.contains("dấu hiệu"))return false;
-
-        return true;
+                &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";
+        return null;
     }
 
     private static int sentenceCount(String s){
