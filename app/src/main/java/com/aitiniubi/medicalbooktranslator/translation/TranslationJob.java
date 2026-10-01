@@ -210,8 +210,16 @@ public final class TranslationJob {
             String fallback=translateBySentences(u,context,providers);
             String fallbackReason=validationReason(u,fallback);
             if(fallbackReason==null)return fallback;
+
+            // Last recovery path: a very small, plain prompt. This is important
+            // for short headings/captions and for models that occasionally return
+            // an empty batch item even though the API request itself succeeded.
+            String direct=translateDirect(u,context,providers);
+            String directReason=validationReason(u,direct);
+            if(directReason==null)return direct;
+
             throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
-                    +" sau 3 lần thử + fallback từng câu: "+fallbackReason
+                    +" sau recovery: "+directReason
                     +". App đã dừng để tránh xuất EPUB thiếu nội dung.");
         }
         return t;
@@ -221,13 +229,27 @@ public final class TranslationJob {
         return validationReason(u,translation)==null;
     }
 
+    private static String translateDirect(Unit u,String context,
+                                           List<TranslationRouter.Provider> providers)
+            throws Exception{
+        Map<String,String> marks=new LinkedHashMap<>();
+        String src=protectMarkup(u.inner,marks);
+        String prompt="Translate ONLY the following English medical-text fragment into professional Vietnamese. "
+                +"Never return an empty answer. Do not explain anything. "
+                +"Keep every placeholder __MBT_MARKUP_000__ exactly unchanged and in the same position. "
+                +"Preserve numbers, units, abbreviations and citations. Return only the translation.\n\n"+src;
+        String response=TranslationRouter.translate(prompt,context,providers);
+        return clean(restoreMarkup(response,marks));
+    }
+
     private static String translateBySentences(Unit u,String context,
                                                     List<TranslationRouter.Provider> providers)
             throws Exception{
         Map<String,String> marks=new LinkedHashMap<>();
         String src=protectMarkup(u.inner,marks);
         List<String> sentences=splitSentences(src);
-        if(sentences.size()<2) return "";
+        if(sentences.isEmpty()) return "";
+        if(sentences.size()==1) return translateDirect(u,context,providers);
 
         StringBuilder prompt=new StringBuilder();
         prompt.append("Translate EVERY sentence below into professional Vietnamese. ")
