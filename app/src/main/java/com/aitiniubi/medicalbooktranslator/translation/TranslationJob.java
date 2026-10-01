@@ -126,7 +126,8 @@ public final class TranslationJob {
                     listener.onPaused(draft,done,total,e);return;
                 }finally{pool.shutdownNow();}
 
-                logger.event("REBUILD", "starting final rebuild translated-current.epub with done=" + done + "/" + total);\n                File finalDraft=new File(workspace,"translated-current.epub");
+                logger.event("REBUILD", "starting final rebuild translated-current.epub with done=" + done + "/" + total);
+                File finalDraft=new File(workspace,"translated-current.epub");
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
@@ -225,9 +226,13 @@ public final class TranslationJob {
                   .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged and in the same relative position; placeholders represent HTML/XML tags or entities and must never be translated or deleted. ")
                   .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
                   .append("Return ONLY the translated fragment. ")
-                  .append("If the source contains multiple sentences, translate all of them.\n")
-                  .append("The previous output failed validation for this reason: ").append(reason).append("\n")
-                  .append("Correct that problem in the new output.\n\n")
+                  .append("If the source contains multiple sentences, translate all of them.
+")
+                  .append("The previous output failed validation for this reason: ").append(reason).append("
+")
+                  .append("Correct that problem in the new output.
+
+")
                   .append(protectedSource);
 
             String raw=TranslationRouter.translate(prompt.toString(),context,providers);
@@ -274,7 +279,9 @@ public final class TranslationJob {
         String prompt="Translate ONLY the following English medical-text fragment into professional Vietnamese. "
                 +"Never return an empty answer. Do not explain anything. "
                 +"Keep every placeholder __MBT_MARKUP_000__ exactly unchanged and in the same position. "
-                +"Preserve numbers, units, abbreviations and citations. Return only the translation.\n\n"+src;
+                +"Preserve numbers, units, abbreviations and citations. Return only the translation.
+
+"+src;
         String response=TranslationRouter.translate(prompt,context,providers);
         return clean(restoreMarkup(response,marks));
     }
@@ -293,9 +300,11 @@ public final class TranslationJob {
               .append("Return ONLY a JSON array of strings, in exactly the same order and count. ")
               .append("Do not omit, merge, summarize, or reorder any sentence. ")
               .append("Preserve numbers, ranges, abbreviations, gene names, units and citation markers. ")
-              .append("This is a recovery pass because the previous translation omitted sentence(s).\\n");
+              .append("This is a recovery pass because the previous translation omitted sentence(s).\
+");
         for(int i=0;i<sentences.size();i++){
-            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\\n");
+            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\
+");
         }
 
         String response=TranslationRouter.translate(prompt.toString(),context,providers).trim();
@@ -391,7 +400,9 @@ public final class TranslationJob {
         return out;
     }
 
-    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }\n\n    private static List<Unit> makeBatch(List<Unit> p,int start){
+    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }
+
+    private static List<Unit> makeBatch(List<Unit> p,int start){
         List<Unit> b=new ArrayList<>();int chars=0;
         for(int i=start;i<p.size()&&b.size()<MAX_BATCH_UNITS;i++){
             Unit u=p.get(i);int cost=u.inner.length()+180;
@@ -416,9 +427,12 @@ public final class TranslationJob {
     private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
         StringBuilder context=new StringBuilder("Medical obstetric ultrasound / fetal medicine textbook. Translate English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations and inline HTML/XML markup.");
         StringBuilder combined=new StringBuilder();
-        for(Unit u:batch)combined.append(strip(u.inner)).append("\n");
+        for(Unit u:batch)combined.append(strip(u.inner)).append("
+");
         String gt=GlossaryManager.promptTerms(combined.toString(),glossary);
-        if(!gt.isEmpty())context.append("\n\n").append(gt);
+        if(!gt.isEmpty())context.append("
+
+").append(gt);
         Map<String,String> got=translateBatch(batch,context.toString(),providers);
         return new BatchResult(batch,got,context.toString());
     }
@@ -426,11 +440,13 @@ public final class TranslationJob {
     private static Map<String,String> translateBatch(List<Unit> batch,String context,List<TranslationRouter.Provider> providers)throws Exception{
         StringBuilder s=new StringBuilder();
         s.append("Return ONLY a JSON array. Each object has exactly id and translation. Keep IDs unchanged. ");
-        s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.\n");
+        s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.
+");
         for(Unit u:batch){
             Map<String,String> marks=new LinkedHashMap<>();
             String protectedSource=protectMarkup(u.inner,marks);
-            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}\n");
+            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}
+");
         }
         String response=TranslationRouter.translate(s.toString(),context,providers).trim();
         String fence=String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96);
@@ -512,7 +528,9 @@ public final class TranslationJob {
         int a=t.indexOf("<"),b=t.lastIndexOf(">");
         return a>0&&b>a?t.substring(a,b+1).trim():t;
     }
-    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r");}
+    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("
+","\
+").replace("\r","\\r");}
     private static String strip(String s){return s.replaceAll("<[^>]+>"," ").replaceAll("&[a-zA-Z#0-9]+;"," ").replaceAll("\\s+"," ").trim();}
     private static boolean blank(String s){return s==null||s.trim().isEmpty();}
     private static String read(ZipFile z,ZipEntry e)throws Exception{try(InputStream in=z.getInputStream(e);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString(StandardCharsets.UTF_8.name());}}
