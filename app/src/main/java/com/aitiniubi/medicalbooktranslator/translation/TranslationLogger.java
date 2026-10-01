@@ -67,6 +67,6 @@ public final class TranslationLogger {
 
     private static String safe(String s) {
         if (s == null) return "";
-        return s.replace('\n', ' ').replace('\r', ' ').replace('|', '/');
+        return s.replace('\\n', ' ').replace('\\r', ' ').replace('|', '/');
     }
 }
