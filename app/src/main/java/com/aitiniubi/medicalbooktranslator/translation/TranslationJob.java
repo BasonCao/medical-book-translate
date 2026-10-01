@@ -43,7 +43,7 @@ public final class TranslationJob {
                 int total=0;
                 for(Unit u:units) if(u.translatable) total++;
                 TranslationStateStore store=new TranslationStateStore(workspace);
-                store.initialize(sourceHash,source.getName(),total);
+                store.initialize(sourceHash,source.getName(),total);\n                logger.start(source.getName(), sourceHash, total);\n                logger.event("QUEUE", "translatable=" + total);
 
                 Map<String,String> doneMap=new LinkedHashMap<>();
                 int done=0;
@@ -53,7 +53,7 @@ public final class TranslationJob {
                         doneMap.put(u.id,r.translation);done++;
                     }
                 }
-                listener.onProgress(done,total,0,"Khôi phục draft: "+done+"/"+total);
+                listener.onProgress(done,total,0,"Khôi phục draft: "+done+"/"+total);\n                logger.event("RECOVER", "done=" + done + " pending=" + (total-done));
 
                 List<Unit> pending=new ArrayList<>();
                 for(Unit u:units)if(!doneMap.containsKey(u.id)&&u.translatable)pending.add(u);
@@ -70,7 +70,7 @@ public final class TranslationJob {
                 int next=0,submitted=0,completedBatches=0;
                 while(next<pending.size() && submitted<parallelism){
                     List<Unit> batch=makeBatch(pending,next); next+=batch.size(); submitted++;
-                    completion.submit(()->translateOneBatchSafe(batch,providers,glossary));
+                    logger.event("BATCH_SUBMIT", "batch=" + submitted + " units=" + batch.size() + " chars=" + batchChars(batch));\n                    completion.submit(()->translateOneBatchSafe(batch,providers,glossary));
                 }
                 try{
                     while(completedBatches<submitted){
@@ -122,7 +122,7 @@ public final class TranslationJob {
                     listener.onPaused(draft,done,total,e);return;
                 }finally{pool.shutdownNow();}
 
-                File finalDraft=new File(workspace,"translated-current.epub");
+                logger.event("REBUILD", "starting final rebuild translated-current.epub with done=" + done + "/" + total);\n                File finalDraft=new File(workspace,"translated-current.epub");
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
@@ -387,7 +387,7 @@ public final class TranslationJob {
         return out;
     }
 
-    private static List<Unit> makeBatch(List<Unit> p,int start){
+    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }\n\n    private static List<Unit> makeBatch(List<Unit> p,int start){
         List<Unit> b=new ArrayList<>();int chars=0;
         for(int i=start;i<p.size()&&b.size()<MAX_BATCH_UNITS;i++){
             Unit u=p.get(i);int cost=u.inner.length()+180;
