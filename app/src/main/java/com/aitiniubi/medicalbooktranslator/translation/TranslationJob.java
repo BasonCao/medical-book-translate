@@ -74,17 +74,36 @@ public final class TranslationJob {
                 }
                 try{
                     while(completedBatches<submitted){
-                        BatchResult br=completion.take().get();
+                        BatchResult br;
+                        try{
+                            br=completion.take().get();
+                        }catch(Exception batchError){
+                            // A failed batch must not abort the entire book. Recover
+                            // each unit independently below; failed units remain source-only.
+                            completedBatches++;
+                            continue;
+                        }
                         completedBatches++;
                         Map<String,String> got=br.translations;
                         List<Unit> batch=br.batch;
                         int batchNo=completedBatches;
                         for(Unit u:batch){
                             String t=got.get(u.id);
-                            t=translateValidatedUnit(u,t,br.context,providers);
-                            store.put(new TranslationStateStore.Record(u.id,u.file,u.sourceHash,t));
-                            doneMap.put(u.id,t);done++;
-                            listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
+                            try{
+                                t=translateValidatedUnit(u,t,br.context,providers);
+                                store.put(new TranslationStateStore.Record(u.id,u.file,u.sourceHash,t));
+                                doneMap.put(u.id,t);done++;
+                                listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
+                            }catch(Exception unitError){
+                                // Never stop the whole EPUB because one short heading,
+                                // caption, or transient AI response failed. Do NOT store an
+                                // empty translation. rebuild() will keep the original source
+                                // HTML for this unit, so no source content can be lost.
+                                listener.onProgress(done,total,batchNo,
+                                        "Bỏ qua tạm unit "+u.id.substring(0,Math.min(12,u.id.length()))
+                                        +" — giữ nguyên nguồn; sẽ dịch lại khi Tiếp tục. "
+                                        +unitError.getMessage());
+                            }
                         }
                         store.saveManifest(sourceHash,source.getName(),total,done);
                         if(next<pending.size()){
