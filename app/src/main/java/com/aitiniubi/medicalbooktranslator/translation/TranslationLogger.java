@@ -43,7 +43,7 @@ public final class TranslationLogger {
         write(stage + " ERROR " + safe(msg));
     }
 
-    public File getFile() { return file; }
+    public File getFile() { return file; }\n\n    public static TranslationLogger current() { return CURRENT.get(); }\n    private static final ThreadLocal<TranslationLogger> CURRENT = new ThreadLocal<>();\n    public static void bind(TranslationLogger logger) { if (logger == null) CURRENT.remove(); else CURRENT.set(logger); }\n    public static void unbind() { CURRENT.remove(); }
 
     private void write(String line) {
         String row = fmt.format(new Date()) + " #" + seq.incrementAndGet() + " " + line + System.lineSeparator();
