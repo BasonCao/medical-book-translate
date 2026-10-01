@@ -17,8 +17,14 @@ public final class TranslationJob {
     }
 
     private static final Pattern BLOCK=Pattern.compile(
-        "<(p|h1|h2|h3|h4|h5|h6|figcaption|caption|th|td|li)\\b([^>]*)>(.*?)</\\1>",
+        "<(p|h1|h2|h3|h4|h5|h6|figcaption|caption|th|td|li|blockquote|dt|dd|pre|address)\\b([^>]*)>(.*?)</\\1>",
         Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
+    private static final Pattern CONTAINER_BLOCK=Pattern.compile(
+        "<(div|section|article|aside)\\b([^>]*)>(.*?)</\\1>",
+        Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
+    private static final Pattern ANY_BLOCK_TAG=Pattern.compile(
+        "<(?:p|h[1-6]|figcaption|caption|th|td|li|blockquote|dt|dd|pre|address|div|section|article|aside)\\b",
+        Pattern.CASE_INSENSITIVE);
     private static final int MAX_BATCH_UNITS=8;
     private static final int MAX_BATCH_CHARS=12000;
 
@@ -106,14 +112,29 @@ public final class TranslationJob {
             Enumeration<? extends ZipEntry> en=zip.entries();
             while(en.hasMoreElements()){
                 ZipEntry e=en.nextElement();String name=e.getName();
-                if(!name.toLowerCase(Locale.US).endsWith(".xhtml"))continue;
-                String x=read(zip,e);Matcher m=BLOCK.matcher(x);int ordinal=0;
-                while(m.find()){
-                    String tag=m.group(1),attrs=m.group(2),inner=m.group(3);
-                    String plain=strip(inner);boolean tr=shouldTranslate(tag,attrs,plain);
-                    String sh=TranslationStateStore.sha256(inner);
+                String lowerName=name.toLowerCase(Locale.US);
+                if(!(lowerName.endsWith(".xhtml")||lowerName.endsWith(".html")||lowerName.endsWith(".htm")))continue;
+                String x=read(zip,e);
+                List<Candidate> candidates=new ArrayList<>();
+                Matcher m=BLOCK.matcher(x);
+                while(m.find()) candidates.add(new Candidate(m.start(),m.end(),m.group(1),m.group(2),m.group(3)));
+
+                // Add leaf containers that contain prose directly. Never add a
+                // container when it contains another block element, so paragraphs
+                // are not swallowed or translated twice.
+                Matcher cm=CONTAINER_BLOCK.matcher(x);
+                while(cm.find()){
+                    Matcher child=ANY_BLOCK_TAG.matcher(cm.group(3));
+                    if(!child.find()) candidates.add(new Candidate(cm.start(),cm.end(),cm.group(1),cm.group(2),cm.group(3)));
+                }
+
+                candidates.sort(Comparator.comparingInt(a->a.start));
+                int ordinal=0;
+                for(Candidate q:candidates){
+                    String plain=strip(q.inner);boolean tr=shouldTranslate(q.tag,q.attrs,plain);
+                    String sh=TranslationStateStore.sha256(q.inner);
                     String id=TranslationStateStore.sha256(name+"|"+ordinal+"|"+sh);
-                    out.add(new Unit(id,name,ordinal,tag,attrs,inner,sh,tr));ordinal++;
+                    out.add(new Unit(id,name,ordinal,q.tag,q.attrs,q.inner,sh,tr));ordinal++;
                 }
             }
         }
@@ -378,6 +399,11 @@ public final class TranslationJob {
     private static boolean blank(String s){return s==null||s.trim().isEmpty();}
     private static String read(ZipFile z,ZipEntry e)throws Exception{try(InputStream in=z.getInputStream(e);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString(StandardCharsets.UTF_8.name());}}
     private static void copyFile(File s,File t)throws IOException{File p=t.getParentFile();if(p!=null&&!p.exists())p.mkdirs();try(InputStream in=new FileInputStream(s);OutputStream o=new FileOutputStream(t)){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);}}
+
+    private static final class Candidate{
+        final int start,end; final String tag,attrs,inner;
+        Candidate(int start,int end,String tag,String attrs,String inner){this.start=start;this.end=end;this.tag=tag;this.attrs=attrs;this.inner=inner;}
+    }
 
     private static final class Unit{
         final String id,file,tag,attrs,inner,sourceHash;final int ordinal;final boolean translatable;
