@@ -28,7 +28,7 @@ public final class TranslationRouter {
 
     private TranslationRouter() {}
 
-    public static String translate(String source, String context, List<Provider> providers) throws Exception {
+    public static String translate(String source, String context, List<Provider> providers) throws Exception { return translate(source, context, providers, null, "AI_CALL"); }\n\n    public static String translate(String source, String context, List<Provider> providers, TranslationLogger logger, String stage) throws Exception {
         if (providers == null || providers.isEmpty()) {
             throw new IllegalArgumentException("Chưa cấu hình AI provider nào có API key.");
         }
@@ -51,7 +51,7 @@ public final class TranslationRouter {
                 } else if (isQuotaOrRateLimit(message)) {
                     DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + (isTemporaryQuota(message) ? TEMPORARY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS));
                 }
-                failures.add(p.name + ": " + message);
+                if (logger != null) logger.event(stage, "PROVIDER_FAIL name=" + p.name + " model=" + p.config.model + " reason=" + message);\n                failures.add(p.name + ": " + message);
             }
         }
 
