@@ -69,7 +69,8 @@ public class MainActivity extends Activity {
         translate=findViewById(R.id.translateButton);
         Button settings=findViewById(R.id.settingsButton);
         Button glossary=findViewById(R.id.glossaryButton);
-        export=findViewById(R.id.exportButton);\n        logButton=findViewById(R.id.logButton);
+        export=findViewById(R.id.exportButton);
+        logButton=findViewById(R.id.logButton);
         reset=findViewById(R.id.resetButton);
         pdfLayout=findViewById(R.id.pdfLayoutButton);
         pdfOneColumn=findViewById(R.id.pdfOneColumnButton);
@@ -105,7 +106,10 @@ public class MainActivity extends Activity {
         analyze.setEnabled(true);translate.setEnabled(!pdfMode);export.setEnabled(lastOutput!=null);
         updatePdfLayoutButtons();
         TranslationStateStore store=new TranslationStateStore(ws);
-        status.setText("📖 Workspace đã lưu\n"+selectedFile.getName()+"\n"+store.summary()+"\nCó thể bấm Dịch / Tiếp tục.");
+        status.setText("📖 Workspace đã lưu
+"+selectedFile.getName()+"
+"+store.summary()+"
+Có thể bấm Dịch / Tiếp tục.");
         report.setText(pdfMode ? "PDF text layer: có thể dịch. PDF scan/image-only không hỗ trợ." : "Tiến độ EPUB được lưu bền vững trong máy. Hết quota hoặc đóng app vẫn có thể tiếp tục.");
     }
 
@@ -140,7 +144,9 @@ public class MainActivity extends Activity {
         }
         if(r==13&&c==RESULT_OK&&d!=null){
             try(FileInputStream in=new FileInputStream(new File(workspace,"translation-debug.log"));OutputStream out=getContentResolver().openOutputStream(d.getData())){
-                if(out==null)throw new IOException("Không mở được nơi lưu log.");\n                byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);\n                Toast.makeText(this,"Đã xuất translation-debug.log",Toast.LENGTH_LONG).show();
+                if(out==null)throw new IOException("Không mở được nơi lưu log.");
+                byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);
+                Toast.makeText(this,"Đã xuất translation-debug.log",Toast.LENGTH_LONG).show();
             }catch(Exception e){showError(e);}
             return;
         }
@@ -204,7 +210,9 @@ public class MainActivity extends Activity {
                 lastOutput=draft.isFile()?draft:null;
                 analyze.setEnabled(true);translate.setEnabled(!pdfMode);export.setEnabled(lastOutput!=null);
                 updatePdfLayoutButtons();
-                status.setText("Đã chọn: "+u.getLastPathSegment()+"\nLoại: "+(pdfMode?"PDF text layer":"EPUB")+"\nWorkspace: "+workspace.getName());
+                status.setText("Đã chọn: "+u.getLastPathSegment()+"
+Loại: "+(pdfMode?"PDF text layer":"EPUB")+"
+Workspace: "+workspace.getName());
                 report.setText(pdfMode ? "Bấm Phân tích PDF. App chỉ dịch PDF có text layer, không xử lý PDF scan." : "Bấm Phân tích EPUB để kiểm tra cấu trúc, hoặc Dịch / Tiếp tục để chạy translation queue.");
             }catch(Exception e){showError(e);}
         }
@@ -221,23 +229,36 @@ public class MainActivity extends Activity {
                     runOnUiThread(()->{
                         progress.setVisibility(View.GONE);progress.setIndeterminate(false);
                         report.setText("PDF: "+pdfBook.title+
-                                "\nSố trang: "+pdfBook.pageCount+
-                                "\nTrang có text: "+pdfBook.textPages+
-                                "\nTrang không có text: "+pdfBook.emptyPages+
-                                "\n\nChỉ PDF có text layer được dịch. PDF scan/image-only sẽ không được xử lý.");
+                                "
+Số trang: "+pdfBook.pageCount+
+                                "
+Trang có text: "+pdfBook.textPages+
+                                "
+Trang không có text: "+pdfBook.emptyPages+
+                                "
+
+Chỉ PDF có text layer được dịch. PDF scan/image-only sẽ không được xử lý.");
                     });
                 } else {
                     book=EpubAnalyzer.analyze(selectedFile);
                     runOnUiThread(()->{
                         progress.setVisibility(View.GONE);progress.setIndeterminate(false);
                         report.setText("EPUB: "+book.title+
-                                "\nFiles: "+book.totalFiles+
-                                "\nXHTML: "+book.xhtmlFiles.size()+
-                                "\nĐoạn văn: "+book.paragraphCount+
-                                "\nHình/ảnh: "+book.imageReferenceCount+
-                                "\nFigure: "+book.figureCount+
-                                "\nBảng: "+book.tableCount+
-                                "\n\nTranslation V1.5: paragraph + heading + list + table-cell queue, lưu từng unit và rebuild draft sau mỗi batch.");
+                                "
+Files: "+book.totalFiles+
+                                "
+XHTML: "+book.xhtmlFiles.size()+
+                                "
+Đoạn văn: "+book.paragraphCount+
+                                "
+Hình/ảnh: "+book.imageReferenceCount+
+                                "
+Figure: "+book.figureCount+
+                                "
+Bảng: "+book.tableCount+
+                                "
+
+Translation V1.5: paragraph + heading + list + table-cell queue, lưu từng unit và rebuild draft sau mỗi batch.");
                     });
                 }
             }catch(Exception e){runOnUiThread(()->showError(e));}
@@ -337,7 +358,9 @@ public class MainActivity extends Activity {
         String idsRaw=prefsHolder.getString("gemini_catalog_ids","");
         String labelsRaw=prefsHolder.getString("gemini_catalog_labels","");
         if(!idsRaw.trim().isEmpty()&&!labelsRaw.trim().isEmpty()){
-            String[] ids=idsRaw.split("\\n",-1),labels=labelsRaw.split("\\n",-1);
+            String[] ids=idsRaw.split("\
+",-1),labels=labelsRaw.split("\
+",-1);
             if(ids.length==labels.length&&ids.length>0)return new String[][]{ids,labels};
         }
         return new String[][]{GEMINI_MODELS,GEMINI_LABELS};
@@ -352,7 +375,8 @@ public class MainActivity extends Activity {
             Request req=new Request.Builder().url(url).get().build();
             try(Response res=new OkHttpClient().newCall(req).execute()){
                 String body=res.body()==null?"":res.body().string();
-                if(!res.isSuccessful())throw new IOException("Gemini models API HTTP "+res.code()+"\\n"+body);
+                if(!res.isSuccessful())throw new IOException("Gemini models API HTTP "+res.code()+"\
+"+body);
                 JSONArray arr=new JSONObject(body).optJSONArray("models");
                 if(arr==null)throw new IOException("Gemini models API không trả về danh sách models.");
                 LinkedHashMap<String,String> found=new LinkedHashMap<>();
@@ -369,7 +393,9 @@ public class MainActivity extends Activity {
                 }
                 if(found.isEmpty())throw new IOException("Không tìm thấy Gemini model text hỗ trợ generateContent.");
                 StringBuilder ids=new StringBuilder(),labels=new StringBuilder();int n=0;
-                for(Map.Entry<String,String> e:found.entrySet()){if(n++>0){ids.append("\\n");labels.append("\\n");}ids.append(e.getKey());labels.append(e.getValue());}
+                for(Map.Entry<String,String> e:found.entrySet()){if(n++>0){ids.append("\
+");labels.append("\
+");}ids.append(e.getKey());labels.append(e.getValue());}
                 prefsHolder.edit().putString("gemini_catalog_ids",ids.toString()).putString("gemini_catalog_labels",labels.toString()).apply();
                 runOnUiThread(()->{refresh.run();note.setText("Gemini catalog đã cập nhật từ Google: "+found.size()+" model text hỗ trợ generateContent.");Toast.makeText(this,"Đã cập nhật "+found.size()+" Gemini model.",Toast.LENGTH_LONG).show();});
             }
@@ -423,7 +449,9 @@ public class MainActivity extends Activity {
         AlertDialog d=b.create();
         d.setOnShowListener(x->{
             d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-                String english=en.getText().toString().trim();String vietnamese=vi.getText().toString().trim().replace("\\n","\n");
+                String english=en.getText().toString().trim();String vietnamese=vi.getText().toString().trim().replace("\
+","
+");
                 if(english.isEmpty()||vietnamese.isEmpty()){Toast.makeText(this,"English và Vietnamese không được trống.",Toast.LENGTH_SHORT).show();return;}
                 String key=english.toLowerCase(Locale.US);
                 for(GlossaryManager.Term t:all)if(t!=old&&t.english!=null&&t.english.trim().toLowerCase(Locale.US).equals(key)){Toast.makeText(this,"English đã tồn tại trong glossary.",Toast.LENGTH_SHORT).show();return;}
@@ -714,7 +742,11 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->{
                     test.setEnabled(true);
                     new AlertDialog.Builder(this).setTitle("Kết nối thành công")
-                            .setMessage("Cấu hình "+profile.getSelectedItemPosition()+1+"\nProvider: "+providerName+"\nModel: "+tc.model+"\n\n"+out)
+                            .setMessage("Cấu hình "+profile.getSelectedItemPosition()+1+"
+Provider: "+providerName+"
+Model: "+tc.model+"
+
+"+out)
                             .setPositiveButton("OK",null).show();
                 });
             }catch(Exception ex){runOnUiThread(()->{test.setEnabled(true);showError(ex);});}}).start();
@@ -759,19 +791,30 @@ public class MainActivity extends Activity {
         File out=new File(workspace,"translated-final.epub");
         translating=true;translate.setEnabled(false);reset.setEnabled(false);
         export.setEnabled(false);progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
-        report.setText("🤖 Translation Queue đang chạy\nBatch tối đa 8 unit / request\nMỗi batch hoàn thành sẽ được lưu ngay.");
+        report.setText("🤖 Translation Queue đang chạy
+Batch tối đa 8 unit / request
+Mỗi batch hoàn thành sẽ được lưu ngay.");
         TranslationJob.run(selectedFile,out,workspace,providers,new TranslationJob.Listener(){
             public void onProgress(int d,int t,int batch,String info){
                 int p=t<=0?0:(int)(100.0*d/t);
-                runOnUiThread(()->{progress.setProgress(p);status.setText("Dịch: "+d+"/"+t+" unit | batch "+batch);report.setText(info+"\n"+d+"/"+t+" unit\n\nNếu hết quota: draft vẫn được lưu, bấm Dịch / Tiếp tục vào ngày khác.");});
+                runOnUiThread(()->{progress.setProgress(p);status.setText("Dịch: "+d+"/"+t+" unit | batch "+batch);report.setText(info+"
+"+d+"/"+t+" unit
+
+Nếu hết quota: draft vẫn được lưu, bấm Dịch / Tiếp tục vào ngày khác.");});
             }
             public void onDone(File f){
                 lastOutput=f;
-                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch hoàn tất.\nEPUB đã rebuild từ source + các translation unit đã khóa.\n"+f.getAbsolutePath());});
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch hoàn tất.
+EPUB đã rebuild từ source + các translation unit đã khóa.
+"+f.getAbsolutePath());});
             }
             public void onPaused(File draft,int d,int t,Exception reason){
                 lastOutput=draft;
-                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(draft!=null&&draft.isFile());progress.setProgress(t<=0?0:(int)(100.0*d/t));String msg=reason.getMessage()==null?reason.toString():reason.getMessage();report.setText("⏸ PAUSED — đã lưu "+d+"/"+t+" unit.\n\n"+msg+"\n\nKhông mất phần đã dịch. Bấm Dịch / Tiếp tục sau khi quota hồi phục hoặc sau khi cấu hình provider khác.");});
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(draft!=null&&draft.isFile());progress.setProgress(t<=0?0:(int)(100.0*d/t));String msg=reason.getMessage()==null?reason.toString():reason.getMessage();report.setText("⏸ PAUSED — đã lưu "+d+"/"+t+" unit.
+
+"+msg+"
+
+Không mất phần đã dịch. Bấm Dịch / Tiếp tục sau khi quota hồi phục hoặc sau khi cấu hình provider khác.");});
             }
             public void onError(Exception e){
                 runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);showError(e);});
@@ -841,7 +884,8 @@ public class MainActivity extends Activity {
         root.addView(one,choiceLp2);
 
         TextView note=new TextView(this);
-        note.setText("2 cột: giữ bố cục, hình và bảng gần PDF gốc.\n"
+        note.setText("2 cột: giữ bố cục, hình và bảng gần PDF gốc.
+"
                 +"1 cột: dồn văn bản thành một cột để đọc trên điện thoại; vị trí hình/bảng có thể thay đổi.");
         note.setTextSize(13);
         note.setTextColor(0xFF666666);
@@ -877,11 +921,15 @@ public class MainActivity extends Activity {
         PdfTranslationJob.run(this,selectedFile,out,workspace,providers,singleColumn,new PdfTranslationJob.Listener(){
             public void onProgress(int d,int t,int page,String info){
                 int p=t<=0?0:(int)(100.0*d/t);
-                runOnUiThread(()->{progress.setProgress(p);status.setText("PDF: "+d+"/"+t+" trang | trang "+page);report.setText(info+"\n"+d+"/"+t+" trang");});
+                runOnUiThread(()->{progress.setProgress(p);status.setText("PDF: "+d+"/"+t+" trang | trang "+page);report.setText(info+"
+"+d+"/"+t+" trang");});
             }
             public void onDone(File f){
                 lastOutput=f;
-                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch PDF hoàn tất.\n"+f.getAbsolutePath()+"\n\nBố cục: "+(singleColumn?"1 cột":"2 cột như PDF gốc")+" . Hình ảnh/bảng được giữ theo chế độ đã chọn.");});
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch PDF hoàn tất.
+"+f.getAbsolutePath()+"
+
+Bố cục: "+(singleColumn?"1 cột":"2 cột như PDF gốc")+" . Hình ảnh/bảng được giữ theo chế độ đã chọn.");});
             }
             public void onPaused(File draft,int d,int t,Exception reason){
                 lastOutput=draft;
@@ -911,9 +959,16 @@ public class MainActivity extends Activity {
     }
 
     private void exportTranslationLog(){
-        if(workspace==null){Toast.makeText(this,"Chưa có workspace dịch.",Toast.LENGTH_SHORT).show();return;}\n        File log=new File(workspace,"translation-debug.log");
-        if(!log.isFile()){Toast.makeText(this,"Chưa có log. Hãy chạy Dịch / Tiếp tục trước.",Toast.LENGTH_SHORT).show();return;}\n        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);\n        i.setType("text/plain");\n        i.putExtra(Intent.EXTRA_TITLE,"translation-debug.log");\n        startActivityForResult(i,13);
-    }\n\n    private void saveOutput(){
+        if(workspace==null){Toast.makeText(this,"Chưa có workspace dịch.",Toast.LENGTH_SHORT).show();return;}
+        File log=new File(workspace,"translation-debug.log");
+        if(!log.isFile()){Toast.makeText(this,"Chưa có log. Hãy chạy Dịch / Tiếp tục trước.",Toast.LENGTH_SHORT).show();return;}
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.setType("text/plain");
+        i.putExtra(Intent.EXTRA_TITLE,"translation-debug.log");
+        startActivityForResult(i,13);
+    }
+
+    private void saveOutput(){
         if(lastOutput==null||!lastOutput.isFile()){Toast.makeText(this,pdfMode?"Chưa có PDF draft.":"Chưa có EPUB draft.",Toast.LENGTH_SHORT).show();return;}
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.setType(pdfMode?"application/pdf":"application/epub+zip");
