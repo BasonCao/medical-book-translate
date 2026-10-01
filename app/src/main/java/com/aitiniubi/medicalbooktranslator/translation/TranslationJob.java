@@ -99,9 +99,13 @@ public final class TranslationJob {
                                 // caption, or transient AI response failed. Do NOT store an
                                 // empty translation. rebuild() will keep the original source
                                 // HTML for this unit, so no source content can be lost.
+                                try{
+                                    store.put(new TranslationStateStore.Record(
+                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",3));
+                                }catch(Exception ignored){}
                                 listener.onProgress(done,total,batchNo,
-                                        "Bỏ qua tạm unit "+u.id.substring(0,Math.min(12,u.id.length()))
-                                        +" — giữ nguyên nguồn; sẽ dịch lại khi Tiếp tục. "
+                                        "SOURCE_ONLY unit "+u.id.substring(0,Math.min(12,u.id.length()))
+                                        +" — giữ nguyên nguồn; sẽ retry ở lần Tiếp tục. "
                                         +unitError.getMessage());
                             }
                         }
@@ -195,6 +199,16 @@ public final class TranslationJob {
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
         String t=clean(candidate);
+        String sourcePlain=strip(u.inner);
+        // Short headings/captions are much safer with a dedicated single-unit
+        // request than inside a JSON batch. This also fixes cases such as
+        // "Seizure", "Renal", and similar 1–3 word headings.
+        if(sourcePlain.length()<=80){
+            try{
+                String direct=translateDirect(u,context,providers);
+                if(validationReason(u,direct)==null)return direct;
+            }catch(Exception ignored){}
+        }
         String reason=validationReason(u,t);
         for(int attempt=0;attempt<3;attempt++){
             if(reason==null)return t;
