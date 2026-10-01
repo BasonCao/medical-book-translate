@@ -194,9 +194,14 @@ public final class TranslationJob {
                   .append(protectedSource);
 
             String raw=TranslationRouter.translate(prompt.toString(),context,providers);
-            String restored=restoreMarkup(raw,marks);
-            t=clean(restored);
-            reason=validationReason(u,t);
+            try{
+                String restored=restoreMarkup(raw,marks);
+                t=clean(restored);
+                reason=validationReason(u,t);
+            }catch(IOException markupError){
+                t="";
+                reason="AI làm mất/thay đổi HTML/XML markup hoặc entity";
+            }
         }
         if(reason!=null){
             // Final fallback: translate each source sentence independently.
