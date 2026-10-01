@@ -70,7 +70,7 @@ public final class TranslationJob {
                 int next=0,submitted=0,completedBatches=0;
                 while(next<pending.size() && submitted<parallelism){
                     List<Unit> batch=makeBatch(pending,next); next+=batch.size(); submitted++;
-                    completion.submit(()->translateOneBatch(batch,providers,glossary));
+                    completion.submit(()->translateOneBatchSafe(batch,providers,glossary));
                 }
                 try{
                     while(completedBatches<submitted){
@@ -108,7 +108,7 @@ public final class TranslationJob {
                         store.saveManifest(sourceHash,source.getName(),total,done);
                         if(next<pending.size()){
                             List<Unit> nextBatch=makeBatch(pending,next);next+=nextBatch.size();submitted++;
-                            completion.submit(()->translateOneBatch(nextBatch,providers,glossary));
+                            completion.submit(()->translateOneBatchSafe(nextBatch,providers,glossary));
                         }
                     }
                 }catch(Exception e){
@@ -381,6 +381,18 @@ public final class TranslationJob {
             b.add(u);chars+=cost;
         }
         return b;
+    }
+
+    private static BatchResult translateOneBatchSafe(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary){
+        try{
+            return translateOneBatch(batch,providers,glossary);
+        }catch(Exception e){
+            // Keep the batch alive so each unit gets its own recovery attempt.
+            // An empty map means no translation is trusted; the original EPUB
+            // source is retained for every unit that still fails.
+            return new BatchResult(batch,new HashMap<>(),
+                    "Batch failed; recovering units independently. "+e.getMessage());
+        }
     }
 
     private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
