@@ -22,13 +22,21 @@ public final class TranslationRouter {
     }
 
     private static final Map<String,Long> DISABLED_UNTIL = new ConcurrentHashMap<>();
+    private static final ThreadLocal<TranslationLogger> ACTIVE_LOGGER = new ThreadLocal<>();
+    private static final ThreadLocal<String> ACTIVE_STAGE = new ThreadLocal<>();
+
+    public static void setDiagnostics(TranslationLogger logger, String stage) { ACTIVE_LOGGER.set(logger); ACTIVE_STAGE.set(stage); }
+    public static void setStage(String stage) { ACTIVE_STAGE.set(stage); }
+    public static void clearDiagnostics() { ACTIVE_LOGGER.remove(); ACTIVE_STAGE.remove(); }
     private static final long DAILY_QUOTA_COOLDOWN_MS = 24L * 60L * 60L * 1000L;
     private static final long RATE_LIMIT_COOLDOWN_MS = 60L * 1000L;
     private static final long TEMPORARY_QUOTA_COOLDOWN_MS = 15L * 60L * 1000L;
 
     private TranslationRouter() {}
 
-    public static String translate(String source, String context, List<Provider> providers) throws Exception {
+    public static String translate(String source, String context, List<Provider> providers) throws Exception { return translate(source, context, providers, ACTIVE_LOGGER.get(), ACTIVE_STAGE.get()==null?"AI_CALL":ACTIVE_STAGE.get()); }
+
+    public static String translate(String source, String context, List<Provider> providers, TranslationLogger logger, String stage) throws Exception {
         if (providers == null || providers.isEmpty()) {
             throw new IllegalArgumentException("Chưa cấu hình AI provider nào có API key.");
         }
@@ -51,6 +59,7 @@ public final class TranslationRouter {
                 } else if (isQuotaOrRateLimit(message)) {
                     DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + (isTemporaryQuota(message) ? TEMPORARY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS));
                 }
+                if (logger != null) logger.event(stage, "PROVIDER_FAIL name=" + p.name + " model=" + p.config.model + " reason=" + message);
                 failures.add(p.name + ": " + message);
             }
         }

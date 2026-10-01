@@ -12,6 +12,6 @@
 <Button android:id="@+id/settingsButton" android:text="⚙ Cấu hình AI + Failover" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <ProgressBar android:id="@+id/progress" style="?android:attr/progressBarStyleHorizontal" android:max="100" android:progress="0" android:visibility="gone" android:layout_marginTop="16dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <TextView android:id="@+id/report" android:textSize="14sp" android:paddingTop="12dp" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:gravity="top"/>
-<Button android:id="@+id/exportButton" android:text="📤 Xuất EPUB / PDF / Draft hiện tại" android:enabled="false" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/logButton" android:text="🧾 Xuất log chẩn đoán dịch" android:layout_marginTop="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>\n<Button android:id="@+id/exportButton" android:text="📤 Xuất EPUB / PDF / Draft hiện tại" android:enabled="false" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <Button android:id="@+id/resetButton" android:text="🗑 Xóa tiến độ dịch" android:layout_marginTop="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 </LinearLayout>
