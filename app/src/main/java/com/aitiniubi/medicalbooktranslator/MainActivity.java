@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         setContentView(com.aitiniubi.medicalbooktranslator.R.layout.activity_main);
         TextView appTitle=findViewById(R.id.appTitle);
-        appTitle.setText("Medical Book Translator V1.10.19");
+        appTitle.setText("Medical Book Translator V1.10.20");
         prefsHolder=getSharedPreferences("config",MODE_PRIVATE);
         status=findViewById(R.id.status);
         report=findViewById(R.id.report);
