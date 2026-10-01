@@ -44,6 +44,9 @@ public final class TranslationJob {
                 for(Unit u:units) if(u.translatable) total++;
                 TranslationStateStore store=new TranslationStateStore(workspace);
                 store.initialize(sourceHash,source.getName(),total);
+                TranslationLogger logger=new TranslationLogger(workspace);
+                TranslationLogger.bind(logger);
+                TranslationRouter.setDiagnostics(logger,"JOB");
                 logger.start(source.getName(), sourceHash, total);
                 logger.event("QUEUE", "translatable=" + total);
 
