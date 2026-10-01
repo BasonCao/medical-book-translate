@@ -26,8 +26,8 @@ public class MainActivity extends Activity {
     private static final String[] PROVIDERS={"OpenRouter — FREE / PAID","Google Gemini — FREE / PAID","OpenAI — PAID","DeepSeek — PAID","Mistral — PAID","Custom OpenAI-compatible"};
     private static final String[] OR_MODELS={"openrouter/free","inclusionai/ling-3.0-flash-sante:free","nvidia/nemotron-3-ultra:free","qwen/qwen3.8-27b:free","google/gemma-4-31b-it:free","google/gemma-4-26b-a4b-it:free","inclusionai/ling-3.0-flash-fin:free"};
     private static final String[] OR_LABELS={"Auto Free Router","Ling 3.0 Flash Sante — Medical","NVIDIA Nemotron 3 Ultra — Free","Qwen 3.8 27B — Free","Gemma 4 31B — Free","Gemma 4 26B A4B — Free","Ling 3.0 Flash Fin — Free"};
-    private static final String[] GEMINI_MODELS={"gemini-3.8-flash","gemini-3.7-flash","gemini-3.6-flash","gemini-3.5-flash","gemini-3.5-flash-lite","gemini-3.1-flash-lite","gemini-3.1-pro-preview","gemini-3-flash-preview","gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.5-pro"};
-    private static final String[] GEMINI_LABELS={"Gemini 3.8 Flash — STABLE","Gemini 3.7 Flash — STABLE","Gemini 3.6 Flash — STABLE","Gemini 3.5 Flash — STABLE","Gemini 3.5 Flash-Lite — STABLE","Gemini 3.1 Flash-Lite — STABLE","Gemini 3.1 Pro — PREVIEW","Gemini 3 Flash — PREVIEW","Gemini 2.5 Flash — LEGACY","Gemini 2.5 Flash-Lite — LEGACY","Gemini 2.5 Pro — LEGACY"};
+    private static final String[] GEMINI_MODELS={"gemini-3.5-flash-lite","gemini-3.7-flash","gemini-3.8-flash","gemini-3.5-flash","gemini-3.1-flash-lite","gemini-2.5-flash","gemini-2.5-flash-lite"};
+    private static final String[] GEMINI_LABELS={"Gemini 3.5 Flash-Lite — FREE TIER / translation","Gemini 3.7 Flash — FREE TIER","Gemini 3.8 Flash — FREE TIER","Gemini 3.5 Flash — FREE TIER","Gemini 3.1 Flash-Lite — FREE TIER / translation","Gemini 2.5 Flash — FREE TIER*","Gemini 2.5 Flash-Lite — FREE TIER*"};
     private static final String GEMINI_MODELS_API="https://generativelanguage.googleapis.com/v1beta/models";
     private static final String[] OPENAI_MODELS={"gpt-5.6-luna","gpt-5.6-terra","gpt-5.6-sol"};
     private static final String[] OPENAI_LABELS={"GPT-5.6 Luna — PAID / low cost","GPT-5.6 Terra — PAID","GPT-5.6 Sol — PAID"};
@@ -578,7 +578,7 @@ public class MainActivity extends Activity {
                 ep.setText(GEMINI_ENDPOINT);
                 customModel.setVisibility(View.GONE);
                 model.setVisibility(View.VISIBLE);
-                note.setText("Gemini: có thể lưu nhiều API key Free ở các cấu hình khác nhau.");
+                note.setText("Gemini Free Tier: ưu tiên Flash-Lite/Flash. Danh sách được cập nhật theo API key bằng nút LÀM MỚI. *Google có thể giới hạn quyền truy cập một số model 2.5.");
                 keyLink.setText("🔑 Gemini API key");
                 keyLink.setVisibility(View.VISIBLE);
                 keyLink.setOnClickListener(v->openUrl("https://aistudio.google.com/apikey"));
