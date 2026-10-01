@@ -43,7 +43,9 @@ public final class TranslationJob {
                 int total=0;
                 for(Unit u:units) if(u.translatable) total++;
                 TranslationStateStore store=new TranslationStateStore(workspace);
-                store.initialize(sourceHash,source.getName(),total);\n                logger.start(source.getName(), sourceHash, total);\n                logger.event("QUEUE", "translatable=" + total);
+                store.initialize(sourceHash,source.getName(),total);
+                logger.start(source.getName(), sourceHash, total);
+                logger.event("QUEUE", "translatable=" + total);
 
                 Map<String,String> doneMap=new LinkedHashMap<>();
                 int done=0;
@@ -53,7 +55,8 @@ public final class TranslationJob {
                         doneMap.put(u.id,r.translation);done++;
                     }
                 }
-                listener.onProgress(done,total,0,"Khôi phục draft: "+done+"/"+total);\n                logger.event("RECOVER", "done=" + done + " pending=" + (total-done));
+                listener.onProgress(done,total,0,"Khôi phục draft: "+done+"/"+total);
+                logger.event("RECOVER", "done=" + done + " pending=" + (total-done));
 
                 List<Unit> pending=new ArrayList<>();
                 for(Unit u:units)if(!doneMap.containsKey(u.id)&&u.translatable)pending.add(u);
@@ -70,7 +73,8 @@ public final class TranslationJob {
                 int next=0,submitted=0,completedBatches=0;
                 while(next<pending.size() && submitted<parallelism){
                     List<Unit> batch=makeBatch(pending,next); next+=batch.size(); submitted++;
-                    logger.event("BATCH_SUBMIT", "batch=" + submitted + " units=" + batch.size() + " chars=" + batchChars(batch));\n                    completion.submit(()->translateOneBatchSafe(batch,providers,glossary));
+                    logger.event("BATCH_SUBMIT", "batch=" + submitted + " units=" + batch.size() + " chars=" + batchChars(batch));
+                    completion.submit(()->translateOneBatchSafe(batch,providers,glossary));
                 }
                 try{
                     while(completedBatches<submitted){
