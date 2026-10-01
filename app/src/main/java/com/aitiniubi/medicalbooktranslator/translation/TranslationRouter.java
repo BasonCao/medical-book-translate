@@ -66,11 +66,8 @@ public final class TranslationRouter {
 
         StringBuilder out = new StringBuilder("Tất cả AI provider đã cấu hình đều thất bại.");
         if (!failures.isEmpty()) {
-            out.append("
-
-Chi tiết:");
-            for (String failure : failures) out.append("
-• ").append(failure);
+            out.append("\n\nChi tiết:");
+            for (String failure : failures) out.append("\n• ").append(failure);
         }
         throw new IOException(out.toString());
     }
