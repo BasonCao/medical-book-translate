@@ -47,7 +47,7 @@ public class MainActivity extends Activity {
 
     private TextView status,report;
     private ProgressBar progress;
-    private Button analyze,translate,export,reset,pdfLayout,pdfOneColumn,pdfKeepLayout;
+    private Button analyze,translate,export,reset,logButton,pdfLayout,pdfOneColumn,pdfKeepLayout;
     private File selectedFile,lastOutput,workspace;
     private EpubBook book;
     private PdfBook pdfBook;
@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
         translate=findViewById(R.id.translateButton);
         Button settings=findViewById(R.id.settingsButton);
         Button glossary=findViewById(R.id.glossaryButton);
-        export=findViewById(R.id.exportButton);
+        export=findViewById(R.id.exportButton);\n        logButton=findViewById(R.id.logButton);
         reset=findViewById(R.id.resetButton);
         pdfLayout=findViewById(R.id.pdfLayoutButton);
         pdfOneColumn=findViewById(R.id.pdfOneColumnButton);
@@ -85,7 +85,7 @@ public class MainActivity extends Activity {
         pdfOneColumn.setOnClickListener(v->startPdfWithLayout(true));
         pdfKeepLayout.setOnClickListener(v->startPdfWithLayout(false));
         updatePdfLayoutButtons();
-        reset.setOnClickListener(v->resetProgress());
+        reset.setOnClickListener(v->resetProgress());\n        if(logButton!=null) logButton.setOnClickListener(v->exportTranslationLog());
 
         restoreWorkspace();
     }
@@ -137,7 +137,7 @@ public class MainActivity extends Activity {
             },"Glossary-CSV-Import").start();
             return;
         }
-        if(r==11&&c==RESULT_OK&&d!=null){
+        if(r==13&&c==RESULT_OK&&d!=null){\n            try(FileInputStream in=new FileInputStream(new File(workspace,"translation-debug.log"));OutputStream out=getContentResolver().openOutputStream(d.getData())){\n                if(out==null)throw new IOException("Không mở được nơi lưu log.");\n                byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);\n                Toast.makeText(this,"Đã xuất translation-debug.log",Toast.LENGTH_LONG).show();\n            }catch(Exception e){showError(e);}\n            return;\n        }\n        if(r==11&&c==RESULT_OK&&d!=null){
             try{
                 if(lastOutput==null||!lastOutput.isFile())throw new IOException(pdfMode?"Chưa có PDF draft để xuất.":"Chưa có EPUB draft để xuất.");
                 try(InputStream in=new FileInputStream(lastOutput);OutputStream out=getContentResolver().openOutputStream(d.getData())){
@@ -903,7 +903,7 @@ public class MainActivity extends Activity {
         f.delete();
     }
 
-    private void saveOutput(){
+    private void exportTranslationLog(){\n        if(workspace==null){Toast.makeText(this,"Chưa có workspace dịch.",Toast.LENGTH_SHORT).show();return;}\n        File log=new File(workspace,"translation-debug.log");\n        if(!log.isFile()){Toast.makeText(this,"Chưa có log. Hãy chạy Dịch / Tiếp tục trước.",Toast.LENGTH_SHORT).show();return;}\n        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);\n        i.setType("text/plain");\n        i.putExtra(Intent.EXTRA_TITLE,"translation-debug.log");\n        startActivityForResult(i,13);\n    }\n\n    private void saveOutput(){
         if(lastOutput==null||!lastOutput.isFile()){Toast.makeText(this,pdfMode?"Chưa có PDF draft.":"Chưa có EPUB draft.",Toast.LENGTH_SHORT).show();return;}
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.setType(pdfMode?"application/pdf":"application/epub+zip");
