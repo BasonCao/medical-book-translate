@@ -27,6 +27,7 @@ public final class TranslationJob {
         Pattern.CASE_INSENSITIVE);
     private static final int MAX_BATCH_UNITS=8;
     private static final int MAX_BATCH_CHARS=12000;
+    private static final Pattern MARKUP_TOKEN=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
 
     private TranslationJob(){}
 
@@ -180,17 +181,21 @@ public final class TranslationJob {
             if(reason==null)return t;
 
             StringBuilder prompt=new StringBuilder();
+            Map<String,String> marks=new LinkedHashMap<>();
+            String protectedSource=protectMarkup(u.inner,marks);
             prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
                   .append("Do not omit, summarize, combine away, or invent any sentence. ")
-                  .append("Preserve every HTML/XML tag and attribute exactly. ")
+                  .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged and in the same relative position; placeholders represent HTML/XML tags or entities and must never be translated or deleted. ")
                   .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
-                  .append("Return ONLY the translated HTML fragment. ")
+                  .append("Return ONLY the translated fragment. ")
                   .append("If the source contains multiple sentences, translate all of them.\n")
                   .append("The previous output failed validation for this reason: ").append(reason).append("\n")
                   .append("Correct that problem in the new output.\n\n")
-                  .append(u.inner);
+                  .append(protectedSource);
 
-            t=clean(TranslationRouter.translate(prompt.toString(),context,providers));
+            String raw=TranslationRouter.translate(prompt.toString(),context,providers);
+            String restored=restoreMarkup(raw,marks);
+            t=clean(restored);
             reason=validationReason(u,t);
         }
         if(reason!=null){
@@ -214,7 +219,8 @@ public final class TranslationJob {
     private static String translateBySentences(Unit u,String context,
                                                     List<TranslationRouter.Provider> providers)
             throws Exception{
-        String src=strip(u.inner);
+        Map<String,String> marks=new LinkedHashMap<>();
+        String src=protectMarkup(u.inner,marks);
         List<String> sentences=splitSentences(src);
         if(sentences.size()<2) return "";
 
@@ -241,7 +247,7 @@ public final class TranslationJob {
             if(i>0)out.append(" ");
             out.append(t);
         }
-        return out.toString();
+        return restoreMarkup(out.toString(),marks);
     }
 
     private static List<String> splitSentences(String s){
@@ -260,9 +266,10 @@ public final class TranslationJob {
         if(blank(translation))return "AI trả về nội dung trống";
         String src=strip(u.inner);
         String dst=strip(translation);
-        if(src.length()<12)return null;
+        if(src.length()<2)return null;
+        if(dst.length()==0)return "bản dịch không có nội dung nhìn thấy";
 
-        if(src.length()>=160 && dst.length()<Math.max(45,src.length()*0.38))
+        if(src.length()>=80 && dst.length()<Math.max(20,src.length()*0.30))
             return "bản dịch ngắn bất thường so với nội dung nguồn";
 
         int srcSent=sentenceCount(src);
@@ -314,7 +321,7 @@ public final class TranslationJob {
         List<String> out=new ArrayList<>();
         if(s==null)return out;
         Matcher m=Pattern.compile(
-                "(?i)\\b(?:\\d+(?:[.,]\\d+)?(?:–|-|to)\\d+(?:[.,]\\d+)?%?|\\d+(?:[.,]\\d+)?%|\\d+:[0-9]+|[A-Z]{2,}\\d*(?:[.-]\\d+)+)\\b")
+                "(?i)(?<![A-Za-z0-9])(?:\\d+(?:[.,]\\d+)?(?:–|-|to)\\d+(?:[.,]\\d+)?%?|\\d+(?:[.,]\\d+)?%|\\d+:[0-9]+|[A-Z]{2,}\\d*(?:[.-]\\d+)+)(?![A-Za-z0-9])")
                 .matcher(s);
         while(m.find())out.add(m.group().toLowerCase(Locale.US));
         return out;
@@ -345,7 +352,9 @@ public final class TranslationJob {
         s.append("Return ONLY a JSON array. Each object has exactly id and translation. Keep IDs unchanged. ");
         s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.\n");
         for(Unit u:batch){
-            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(u.inner)).append("\"}\n");
+            Map<String,String> marks=new LinkedHashMap<>();
+            String protectedSource=protectMarkup(u.inner,marks);
+            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}\n");
         }
         String response=TranslationRouter.translate(s.toString(),context,providers).trim();
         String fence=String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96);
@@ -356,7 +365,15 @@ public final class TranslationJob {
         for(int i=0;i<arr.length();i++){
             JSONObject o=arr.optJSONObject(i);if(o==null)continue;
             String id=o.optString("id",""),t=o.optString("translation","");
-            if(!id.isEmpty()&&!t.isEmpty())out.put(id,t);
+            if(!id.isEmpty()&&!t.isEmpty()){
+                for(Unit u:batch) if(u.id.equals(id)){
+                    Map<String,String> marks=new LinkedHashMap<>();
+                    protectMarkup(u.inner,marks);
+                    try{ t=restoreMarkup(t,marks); if(!blank(t)) out.put(id,t); }
+                    catch(Exception ignored){ }
+                    break;
+                }
+            }
         }
         return out;
     }
@@ -385,6 +402,31 @@ public final class TranslationJob {
             }
         }
         EpubBuilder.copyWithReplacements(source,output,replacements);
+    }
+
+    private static String protectMarkup(String s,Map<String,String> marks){
+        if(s==null||s.isEmpty())return "";
+        Matcher m=MARKUP_TOKEN.matcher(s);
+        StringBuffer out=new StringBuffer();
+        int i=0;
+        while(m.find()){
+            String token=String.format(Locale.US,"__MBT_MARKUP_%03d__",i++);
+            marks.put(token,m.group());
+            m.appendReplacement(out,Matcher.quoteReplacement(token));
+        }
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    private static String restoreMarkup(String s,Map<String,String> marks)throws IOException{
+        String t=s==null?"":s;
+        for(Map.Entry<String,String> e:marks.entrySet()){
+            int count=0,from=0;
+            while((from=t.indexOf(e.getKey(),from))>=0){count++;from+=e.getKey().length();}
+            if(count!=1)throw new IOException("AI làm mất/thay đổi placeholder "+e.getKey());
+            t=t.replace(e.getKey(),e.getValue());
+        }
+        return t;
     }
 
     private static String clean(String s){
