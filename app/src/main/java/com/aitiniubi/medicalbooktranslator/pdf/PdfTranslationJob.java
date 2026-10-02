@@ -1264,8 +1264,12 @@ public final class PdfTranslationJob {
                                 if(crossesVerticalGuide)break;
                             }
                         }
-                        float threshold=Math.max(24f,prev.getFontSizeInPt()*3.5f);
-                        if((gap>threshold||crossesTwoColumns||crossesVerticalGuide)&&!piece.isEmpty()){
+                        // Ordinary justified prose can have very large inter-word
+                        // gaps. Never split a normal line just because the gap is large;
+                        // doing so fragments titles, author lines and justified paragraphs
+                        // into tiny LayoutUnits. Only split when we have hard visual evidence
+                        // of a second column or an actual vector table divider.
+                        if((crossesTwoColumns||crossesVerticalGuide)&&!piece.isEmpty()){
                             addLine(out,piece);
                             piece=new ArrayList<>();
                         }
