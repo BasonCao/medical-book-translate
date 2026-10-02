@@ -42,10 +42,12 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DLLAMA_BUILD_TOOLS=ON \
             -DLLAMA_BUILD_EXAMPLES=ON
-          cmake --build llama-build --config Release --target nllb-simple -j 2
-          test -f llama-build/bin/nllb-simple
+          cmake --build llama-build --config Release -j 2
+          echo "Available llama.cpp binaries:"
+          find llama-build -type f -perm -111 | head -80
+          test -f llama-build/bin/llama-run
           mkdir -p app/src/main/assets
-          cp llama-build/bin/nllb-simple app/src/main/assets/nllb-simple
+          cp llama-build/bin/llama-run app/src/main/assets/nllb-simple
           chmod 755 app/src/main/assets/nllb-simple
 
       - name: Set up Gradle
