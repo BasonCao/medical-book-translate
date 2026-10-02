@@ -125,11 +125,12 @@ public final class TranslationJob {
                 final int parallelism=4;
                 java.util.concurrent.ExecutorService pool=java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<BatchResult> completion=new java.util.concurrent.ExecutorCompletionService<>(pool);
+                final java.util.concurrent.atomic.AtomicBoolean quotaSignal=new java.util.concurrent.atomic.AtomicBoolean(false);
                 int next=0,submitted=0,completedBatches=0;
                 while(next<pending.size() && submitted<parallelism){
                     List<Unit> batch=makeBatch(pending,next); next+=batch.size(); submitted++;
                     logger.event("BATCH_SUBMIT", "batch=" + submitted + " units=" + batch.size() + " chars=" + batchChars(batch));
-                    completion.submit(()->translateOneBatchSafe(batch,providers,glossary));
+                    submitBatch(completion,logger,providers,glossary,quotaSignal,batch);
                 }
                 try{
                     while(completedBatches<submitted){
@@ -148,6 +149,16 @@ public final class TranslationJob {
                                 return;
                             }
                             logger.event("BATCH_FAIL","batch="+completedBatches+" reason="+safeMessage(batchError));
+                            // The normal worker wrapper catches every Throwable, so this is
+                            // only a last-resort executor failure. Do not silently finish early.
+                            if(next<pending.size() && !quotaSignal.get()){
+                                List<Unit> replacement=makeBatch(pending,next);
+                                next+=replacement.size();
+                                submitted++;
+                                logger.event("BATCH_REPLACEMENT","batch="+submitted+" units="+replacement.size()
+                                        +" reason=executor failure");
+                                submitBatch(completion,logger,providers,glossary,quotaSignal,replacement);
+                            }
                             continue;
                         }
                         completedBatches++;
@@ -191,9 +202,23 @@ public final class TranslationJob {
                             }
                         }
                         store.saveManifest(sourceHash,source.getName(),total,done);
+
+                        // A quota can be detected by another in-flight worker while this
+                        // successful batch is being committed. Stop scheduling immediately
+                        // instead of launching more requests into an exhausted/rate-limited
+                        // provider. Already completed work is kept in the draft/state store.
+                        if(quotaSignal.get()){
+                            Exception reason=new QuotaPauseException("AI provider hết quota/rate limit; đã dừng tạo request mới.");
+                            logger.event("QUOTA_PAUSE","done="+done+"/"+total+" reason="+safeMessage(reason));
+                            File draft=new File(workspace,"translated-current.epub");
+                            rebuild(source,draft,units,doneMap);
+                            listener.onPaused(draft,done,total,reason);
+                            return;
+                        }
+
                         if(next<pending.size()){
                             List<Unit> nextBatch=makeBatch(pending,next);next+=nextBatch.size();submitted++;
-                            completion.submit(()->translateOneBatchSafe(nextBatch,providers,glossary));
+                            submitBatch(completion,logger,providers,glossary,quotaSignal,nextBatch);
                         }
                     }
                 }catch(Exception e){
@@ -482,7 +507,7 @@ public final class TranslationJob {
     private static BatchResult translateOneBatchSafe(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary){
         try{
             return translateOneBatch(batch,providers,glossary);
-        }catch(Exception e){
+        }catch(Throwable e){
             if(isQuotaError(e)){
                 return new BatchResult(batch,new HashMap<>(),
                         "AI provider hết quota/rate limit: "+safeMessage(e),true);
@@ -490,6 +515,27 @@ public final class TranslationJob {
             return new BatchResult(batch,new HashMap<>(),
                     "Batch failed; units will be logged and skipped: "+safeMessage(e),false);
         }
+    }
+
+    private static void submitBatch(
+            java.util.concurrent.CompletionService<BatchResult> completion,
+            TranslationLogger logger,
+            List<TranslationRouter.Provider> providers,
+            List<GlossaryManager.Term> glossary,
+            java.util.concurrent.atomic.AtomicBoolean quotaSignal,
+            List<Unit> batch){
+        completion.submit(()->{
+            TranslationLogger.bind(logger);
+            TranslationRouter.setDiagnostics(logger,"JOB");
+            try{
+                BatchResult r=translateOneBatchSafe(batch,providers,glossary);
+                if(r.quota)quotaSignal.set(true);
+                return r;
+            }finally{
+                TranslationRouter.clearDiagnostics();
+                TranslationLogger.unbind();
+            }
+        });
     }
 
     private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
