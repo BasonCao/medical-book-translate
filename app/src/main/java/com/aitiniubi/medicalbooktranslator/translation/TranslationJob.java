@@ -55,6 +55,10 @@ public final class TranslationJob {
         return false;
     }
 
+    private static QuotaPauseException quota(Throwable e){
+        return new QuotaPauseException("AI provider hết quota/rate limit: "+safeMessage(e));
+    }
+
     private static String safeMessage(Throwable e){
         String s=e==null?null:e.getMessage();
         if(s==null||s.trim().isEmpty())return e==null?"unknown error":e.getClass().getSimpleName();
