@@ -12,6 +12,10 @@ import java.util.Locale;
  * The router never invents credentials: only configured providers are eligible.
  */
 public final class TranslationRouter {
+    public static final class QuotaException extends IOException {
+        public QuotaException(String message) { super(message); }
+    }
+
     public static final class Provider {
         public final String name;
         public final TranslationConfig config;
@@ -51,13 +55,29 @@ public final class TranslationRouter {
                 continue;
             }
             try {
-                return OpenAICompatibleTranslator.translate(source, context, p.config);
+                String result = OpenAICompatibleTranslator.translate(source, context, p.config);
+                if (logger != null) {
+                    logger.event(stage, "PROVIDER_OK name=" + p.name + " model=" + p.config.model);
+                }
+                return result;
             } catch (Exception e) {
                 String message = e.getMessage() == null ? e.toString() : e.getMessage();
-                if (isDailyQuota(message)) {
-                    DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + DAILY_QUOTA_COOLDOWN_MS);
-                } else if (isQuotaOrRateLimit(message)) {
-                    DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + (isTemporaryQuota(message) ? TEMPORARY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS));
+                if (isQuotaOrRateLimit(message)) {
+                    long cooldown = isDailyQuota(message)
+                            ? DAILY_QUOTA_COOLDOWN_MS
+                            : (isTemporaryQuota(message) ? TEMPORARY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS);
+                    DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + cooldown);
+                    if (logger != null) {
+                        logger.event(stage, "QUOTA_DETECTED name=" + p.name
+                                + " model=" + p.config.model
+                                + " cooldownMs=" + cooldown
+                                + " reason=" + message);
+                    }
+                    // A quota/rate-limit error is a hard pause condition for the
+                    // current translation job. Do NOT fail over to another provider:
+                    // otherwise the app keeps consuming quota and the user loses
+                    // the explicit PAUSED state requested for this workflow.
+                    throw new QuotaException(message);
                 }
                 if (logger != null) logger.event(stage, "PROVIDER_FAIL name=" + p.name + " model=" + p.config.model + " reason=" + message);
                 failures.add(p.name + ": " + message);
@@ -76,10 +96,14 @@ public final class TranslationRouter {
         if (message == null) return false;
         String s = message.toLowerCase(Locale.US);
         return s.contains("http 429")
+                || s.contains("code 429")
+                || s.contains("resource_exhausted")
                 || s.contains("quota")
                 || s.contains("rate limit")
                 || s.contains("free-models-per-day")
-                || s.contains("requests per day");
+                || s.contains("requests per day")
+                || s.contains("too many requests")
+                || s.contains("generate_content_free_tier_requests");
     }
 
     private static boolean isDailyQuota(String message) {
@@ -91,7 +115,19 @@ public final class TranslationRouter {
                 || s.contains("add 10 credits");
     }
 
-    private static boolean isTemporaryQuota(String message) { if (message == null) return false; String s = message.toLowerCase(Locale.US); return s.contains("requests per minute") || s.contains("tokens per minute") || s.contains("rpm") || s.contains("tpm") || s.contains("retry-after"); }
+    private static boolean isTemporaryQuota(String message) {
+        if (message == null) return false;
+        String s = message.toLowerCase(Locale.US);
+        return s.contains("requests per minute")
+                || s.contains("tokens per minute")
+                || s.contains("perminute")
+                || s.contains("per_minute")
+                || s.contains("rpm")
+                || s.contains("tpm")
+                || s.contains("retry-after")
+                || s.contains("retryinfo")
+                || s.contains("retry delay");
+    }
 
     private static boolean isBlank(String s) {
         return s == null || s.trim().isEmpty();
