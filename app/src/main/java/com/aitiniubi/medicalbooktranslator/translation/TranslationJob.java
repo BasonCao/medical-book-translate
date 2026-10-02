@@ -302,7 +302,67 @@ public final class TranslationJob {
         return restoreMarkup(out.toString(),marks);
     }
 
-    private static List<String> splitSentences(String s){\n        List<String> out=new ArrayList<>();\n        if(s==null)return out;\n        Matcher m=Pattern.compile(".*?(?:[.!?](?=\\s|$)|$)",Pattern.DOTALL).matcher(s.trim());\n        while(m.find()){\n            String x=m.group().trim();\n            if(!x.isEmpty())out.add(x);\n            if(m.end()==s.trim().length())break;\n        }\n        return out;\n    }\n\n    private static String validationReason(Unit u,String translation){\n        if(blank(translation))return "AI trả về nội dung trống";\n        String src=strip(u.inner);\n        String dst=strip(translation);\n        if(src.length()<2)return null;\n        if(dst.length()==0)return "bản dịch không có nội dung nhìn thấy";\n\n        if(src.length()>=80 && dst.length()<Math.max(20,src.length()*0.30))\n            return "bản dịch ngắn bất thường so với nội dung nguồn";\n\n        int srcSent=sentenceCount(src);\n        int dstSent=sentenceCount(dst);\n        if(srcSent>=2 && dstSent<srcSent)\n            return "thiếu câu (nguồn "+srcSent+" câu, bản dịch "+dstSent+" câu)";\n        if(srcSent>=2 && dstSent<1)\n            return "không có câu trong bản dịch";\n\n        List<String> nums=importantTokens(src);\n        if(!nums.isEmpty()){\n            Map<String,Integer> have=new HashMap<>();\n            for(String x:importantTokens(dst))have.put(x,have.getOrDefault(x,0)+1);\n            Map<String,Integer> need=new HashMap<>();\n            for(String x:nums)need.put(x,need.getOrDefault(x,0)+1);\n            int covered=0,total=0;\n            for(Map.Entry<String,Integer> e:need.entrySet()){\n                total+=e.getValue();\n                covered+=Math.min(e.getValue(),have.getOrDefault(e.getKey(),0));\n            }\n            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))\n                return "thiếu số liệu/citation quan trọng ("+covered+"/"+total+" token được giữ lại)";\n        }\n\n        String low=dst.toLowerCase(Locale.US);\n        if(src.toLowerCase(Locale.US).equals("feature")\n                &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return "heading Feature chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("renal")\n                &&!low.contains("thận"))return "heading Renal chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("seizure")\n                &&!low.contains("co giật"))return "heading Seizure chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("prenatal")\n                &&!low.contains("trước sinh"))return "heading Prenatal chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("definition")\n                &&!low.contains("định nghĩa"))return "heading Definition chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("classic signs")\n                &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";\n        return null;\n    }\n\n    private static boolean isProviderUnavailable(String message){
+    private static List<String> splitSentences(String s){
+        List<String> out=new ArrayList<>();
+        if(s==null)return out;
+        Matcher m=Pattern.compile(".*?(?:[.!?](?=\s|$)|$)",Pattern.DOTALL).matcher(s.trim());
+        while(m.find()){
+            String x=m.group().trim();
+            if(!x.isEmpty())out.add(x);
+            if(m.end()==s.trim().length())break;
+        }
+        return out;
+    }
+
+    private static String validationReason(Unit u,String translation){
+        if(blank(translation))return "AI trả về nội dung trống";
+        String src=strip(u.inner);
+        String dst=strip(translation);
+        if(src.length()<2)return null;
+        if(dst.length()==0)return "bản dịch không có nội dung nhìn thấy";
+
+        if(src.length()>=80 && dst.length()<Math.max(20,src.length()*0.30))
+            return "bản dịch ngắn bất thường so với nội dung nguồn";
+
+        int srcSent=sentenceCount(src);
+        int dstSent=sentenceCount(dst);
+        if(srcSent>=2 && dstSent<srcSent)
+            return "thiếu câu (nguồn "+srcSent+" câu, bản dịch "+dstSent+" câu)";
+        if(srcSent>=2 && dstSent<1)
+            return "không có câu trong bản dịch";
+
+        List<String> nums=importantTokens(src);
+        if(!nums.isEmpty()){
+            Map<String,Integer> have=new HashMap<>();
+            for(String x:importantTokens(dst))have.put(x,have.getOrDefault(x,0)+1);
+            Map<String,Integer> need=new HashMap<>();
+            for(String x:nums)need.put(x,need.getOrDefault(x,0)+1);
+            int covered=0,total=0;
+            for(Map.Entry<String,Integer> e:need.entrySet()){
+                total+=e.getValue();
+                covered+=Math.min(e.getValue(),have.getOrDefault(e.getKey(),0));
+            }
+            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))
+                return "thiếu số liệu/citation quan trọng ("+covered+"/"+total+" token được giữ lại)";
+        }
+
+        String low=dst.toLowerCase(Locale.US);
+        if(src.toLowerCase(Locale.US).equals("feature")
+                &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return "heading Feature chưa được dịch";
+        if(src.toLowerCase(Locale.US).equals("renal")
+                &&!low.contains("thận"))return "heading Renal chưa được dịch";
+        if(src.toLowerCase(Locale.US).equals("seizure")
+                &&!low.contains("co giật"))return "heading Seizure chưa được dịch";
+        if(src.toLowerCase(Locale.US).equals("prenatal")
+                &&!low.contains("trước sinh"))return "heading Prenatal chưa được dịch";
+        if(src.toLowerCase(Locale.US).equals("definition")
+                &&!low.contains("định nghĩa"))return "heading Definition chưa được dịch";
+        if(src.toLowerCase(Locale.US).equals("classic signs")
+                &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";
+        return null;
+    }
+
+    private static boolean isProviderUnavailable(String message){
         if(message==null)return false;
         String s=message.toLowerCase(Locale.US);
         return s.contains("http 429")||s.contains("quota")||s.contains("rate limit")
@@ -321,7 +381,7 @@ public final class TranslationJob {
 
     private static int sentenceCount(String s){
         if(s==null||s.trim().isEmpty())return 0;
-        Matcher m=Pattern.compile("[.!?](?=\\\\s|$)").matcher(s);
+        Matcher m=Pattern.compile("[.!?](?=\s|$)").matcher(s);
         int n=0;while(m.find())n++;
         return Math.max(1,n);
     }
@@ -330,18 +390,39 @@ public final class TranslationJob {
         List<String> out=new ArrayList<>();
         if(s==null)return out;
         Matcher m=Pattern.compile(
-                "(?i)(?<![A-Za-z0-9])(?:\\\\d+(?:[.,]\\\\d+)?(?:–|-|to)\\\\d+(?:[.,]\\\\d+)?%?|\\\\d+(?:[.,]\\\\d+)?%|\\\\d+:[0-9]+|[A-Z]{2,}\\\\d*(?:[.-]\\\\d+)+)(?![A-Za-z0-9])")
+                "(?i)(?<![A-Za-z0-9])(?:\d+(?:[.,]\d+)?(?:–|-|to)\d+(?:[.,]\d+)?%?|\d+(?:[.,]\d+)?%|\d+:[0-9]+|[A-Z]{2,}\d*(?:[.-]\d+)+)(?![A-Za-z0-9])")
                 .matcher(s);
         while(m.find())out.add(m.group().toLowerCase(Locale.US));
         return out;
     }
 
-    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }\n\n    private static List<Unit> makeBatch(List<Unit> p,int start){\n        List<Unit> b=new ArrayList<>();int chars=0;\n        for(int i=start;i<p.size()&&b.size()<MAX_BATCH_UNITS;i++){\n            Unit u=p.get(i);int cost=u.inner.length()+180;\n            if(!b.isEmpty()&&chars+cost>MAX_BATCH_CHARS)break;\n            b.add(u);chars+=cost;\n        }\n        return b;\n    }\n\n    private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
+    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }
+
+    private static List<Unit> makeBatch(List<Unit> p,int start){
+        List<Unit> b=new ArrayList<>();int chars=0;
+        for(int i=start;i<p.size()&&b.size()<MAX_BATCH_UNITS;i++){
+            Unit u=p.get(i);int cost=u.inner.length()+180;
+            if(!b.isEmpty()&&chars+cost>MAX_BATCH_CHARS)break;
+            b.add(u);chars+=cost;
+        }
+        return b;
+    }
+
+    private static BatchResult translateOneBatchSafe(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary){
+        try{
+            return translateOneBatch(batch,providers,glossary);
+        }catch(Exception e){
+            return new BatchResult(batch,new HashMap<>(),
+                    "Batch failed; recovering units independently. "+e.getMessage());
+        }
+    }
+
+    private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
         StringBuilder context=new StringBuilder("Medical obstetric ultrasound / fetal medicine textbook. Translate English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations and inline HTML/XML markup.");
         StringBuilder combined=new StringBuilder();
-        for(Unit u:batch)combined.append(strip(u.inner)).append("\\n");
+        for(Unit u:batch)combined.append(strip(u.inner)).append("\n");
         String gt=GlossaryManager.promptTerms(combined.toString(),glossary);
-        if(!gt.isEmpty())context.append("\\n\\n").append(gt);
+        if(!gt.isEmpty())context.append("\n\n").append(gt);
         Map<String,String> got=translateBatch(batch,context.toString(),providers);
         return new BatchResult(batch,got,context.toString());
     }
@@ -349,15 +430,15 @@ public final class TranslationJob {
     private static Map<String,String> translateBatch(List<Unit> batch,String context,List<TranslationRouter.Provider> providers)throws Exception{
         StringBuilder s=new StringBuilder();
         s.append("Return ONLY a JSON array. Each object has exactly id and translation. Keep IDs unchanged. ");
-        s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.\\n");
+        s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.\n");
         for(Unit u:batch){
             Map<String,String> marks=new LinkedHashMap<>();
             String protectedSource=protectMarkup(u.inner,marks);
-            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}\\n");
+            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}\n");
         }
         String response=TranslationRouter.translate(s.toString(),context,providers).trim();
         String fence=String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96);
-        if(response.startsWith(fence))response=response.replaceFirst("^"+fence+"(?:json)?\\\\s*","").replaceFirst("\\\\s*"+fence+"$","");
+        if(response.startsWith(fence))response=response.replaceFirst("^"+fence+"(?:json)?\\s*","").replaceFirst("\\s*"+fence+"$","");
         int a=response.indexOf('['),b=response.lastIndexOf(']');
         if(a<0||b<=a)throw new IOException("AI không trả về JSON batch hợp lệ.");
         JSONArray arr=new JSONArray(response.substring(a,b+1));Map<String,String> out=new HashMap<>();
@@ -376,6 +457,12 @@ public final class TranslationJob {
         }
         return out;
     }
+
+    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r");}
+    private static String strip(String s){return s.replaceAll("<[^>]+>"," ").replaceAll("&[a-zA-Z#0-9]+;"," ").replaceAll("\\s+"," ").trim();}
+    private static boolean blank(String s){return s==null||s.trim().isEmpty();}
+    private static String read(ZipFile z,ZipEntry e)throws Exception{try(InputStream in=z.getInputStream(e);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString(StandardCharsets.UTF_8.name());}}
+    private static void copyFile(File s,File t)throws IOException{File p=t.getParentFile();if(p!=null&&!p.exists())p.mkdirs();try(InputStream in=new FileInputStream(s);OutputStream o=new FileOutputStream(t)){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);}}
 
     private static void rebuild(File source,File output,List<Unit> units,Map<String,String> done)throws Exception{
         Map<String,List<Rep>> byFile=new LinkedHashMap<>();
