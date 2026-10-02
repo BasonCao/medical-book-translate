@@ -54,8 +54,9 @@ public final class OfflineNllbTranslator {
     public static String translate(Context context,String source)throws Exception{
         if(source==null||source.trim().isEmpty())return "";
         if(!isInstalled(context))throw new IOException("Chưa cài model Offline NLLB 600M. Hãy tải model trong Cài đặt Offline AI.");
-        File binary=new File(context.getApplicationInfo().nativeLibraryDir,"libnllb-simple.so");
-        if(!binary.isFile())throw new IOException("APK chưa chứa engine NLLB native (libnllb-simple.so).");
+        File binary=engineFile(context);
+        if(!binary.isFile())throw new IOException("APK chưa chứa engine NLLB offline.");
+        if(!binary.canExecute())binary.setExecutable(true);
         ProcessBuilder pb=new ProcessBuilder(binary.getAbsolutePath(),modelFile(context).getAbsolutePath(),
                 "eng_Latn "+source.replace("\n"," "), "vie_Latn");
         pb.redirectErrorStream(true);
@@ -68,6 +69,18 @@ public final class OfflineNllbTranslator {
         String raw=all.toString().trim();
         if(p.exitValue()!=0)throw new IOException("NLLB offline failed: "+raw);
         return cleanOutput(raw);
+    }
+
+    private static File engineFile(Context context)throws IOException{
+        File out=new File(context.getFilesDir(),"nllb-simple");
+        if(out.isFile()&&out.length()>100_000L)return out;
+        try(InputStream in=context.getAssets().open("nllb-simple");
+            OutputStream outStream=new BufferedOutputStream(new FileOutputStream(out))){
+            byte[] buf=new byte[1024*1024];int n;
+            while((n=in.read(buf))>0)outStream.write(buf,0,n);
+        }
+        if(!out.setExecutable(true,false))throw new IOException("Không cấp quyền chạy engine NLLB.");
+        return out;
     }
 
     private static String cleanOutput(String raw){
