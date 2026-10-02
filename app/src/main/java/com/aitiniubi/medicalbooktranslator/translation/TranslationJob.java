@@ -239,7 +239,7 @@ public final class TranslationJob {
                     try{
                         loggerSafeTopLevelPause(workspace, source, output, reason);
                     }catch(Exception ignored){}
-                    listener.onPaused(new File(workspace,"translated-current.epub"),0,units.size(),reason);
+                    listener.onPaused(new File(workspace,"translated-current.epub"),0,total,reason);
                 }else{
                     listener.onError(e);
                 }
