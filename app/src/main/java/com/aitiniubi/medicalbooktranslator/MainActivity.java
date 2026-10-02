@@ -938,11 +938,6 @@ public class MainActivity extends Activity {
         state.setPadding(0,pad/2,0,pad/2);
         state.setText(TranslationOfflineManager.status(this));
         root.addView(state,new LinearLayout.LayoutParams(-1,-2));
-        new AlertDialog.Builder(this).setTitle("🟢 Offline AI")
-                .setView(root)
-                .setNegativeButton("Đóng",null)
-                .setPositiveButton(installed?"TẮT OFFLINE":"TẢI MODEL",null)
-                .create();
         final AlertDialog dialog=new AlertDialog.Builder(this).setTitle("🟢 Offline AI").setView(root)
                 .setNegativeButton("Đóng",null).setPositiveButton(installed?"TẮT OFFLINE":"TẢI MODEL",null).create();
         dialog.setOnShowListener(x->{
