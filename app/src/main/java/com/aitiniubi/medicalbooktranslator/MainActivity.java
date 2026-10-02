@@ -762,11 +762,11 @@ public class MainActivity extends Activity {
         File out=new File(workspace,"translated-final.epub");
         translating=true;translate.setEnabled(false);reset.setEnabled(false);
         export.setEnabled(false);progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
-        report.setText("🤖 Translation Queue đang chạy\nBatch tối đa 8 unit / request\nMỗi batch hoàn thành sẽ được lưu ngay.");
+        report.setText("🤖 Translation Queue đang chạy\nBatch tối đa 10 unit / request\nMỗi batch hoàn thành sẽ được lưu ngay.");
         TranslationJob.run(selectedFile,out,workspace,providers,new TranslationJob.Listener(){
             public void onProgress(int d,int t,int batch,String info){
                 int p=t<=0?0:(int)(100.0*d/t);
-                runOnUiThread(()->{progress.setProgress(p);status.setText("Dịch: "+d+"/"+t+" unit | batch "+batch);report.setText(info+"\n"+d+"/"+t+" unit\n\nNếu hết quota: draft vẫn được lưu, bấm Dịch / Tiếp tục vào ngày khác.");});
+                runOnUiThread(()->{progress.setProgress(p);status.setText("Dịch: "+d+"/"+t+" unit | batch "+batch);report.setText(info+"\n"+d+"/"+t+" unit\n\nNếu hết quota: app sẽ tạm dừng ngay, lưu draft và chờ quota hồi phục.");});
             }
             public void onDone(File f){
                 lastOutput=f;
