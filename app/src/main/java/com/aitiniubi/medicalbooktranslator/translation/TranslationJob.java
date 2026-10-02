@@ -25,8 +25,8 @@ public final class TranslationJob {
     private static final Pattern ANY_BLOCK_TAG=Pattern.compile(
         "<(?:p|h[1-6]|figcaption|caption|th|td|li|blockquote|dt|dd|pre|address|div|section|article|aside)\\b",
         Pattern.CASE_INSENSITIVE);
-    private static final int MAX_BATCH_UNITS=8;
-    private static final int MAX_BATCH_CHARS=12000;
+    private static final int MAX_BATCH_UNITS=10;
+    private static final int MAX_BATCH_CHARS=16000;
     private static final Pattern MARKUP_TOKEN=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
 
     private TranslationJob(){}
@@ -70,7 +70,7 @@ public final class TranslationJob {
                 }
 
                 final List<GlossaryManager.Term> glossary=GlossaryManager.load(workspace);
-                final int parallelism=3;
+                final int parallelism=4;
                 java.util.concurrent.ExecutorService pool=java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<BatchResult> completion=new java.util.concurrent.ExecutorCompletionService<>(pool);
                 int next=0,submitted=0,completedBatches=0;
@@ -202,68 +202,32 @@ public final class TranslationJob {
         Matcher m=Pattern.compile("[À-ỹĐđ]{2,}").matcher(s);int n=0;while(m.find())n++;return n;
     }
 
+    /**
+     * Fast-fail validation policy (V1.11.2):
+     * 1) Trust a valid batch result immediately.
+     * 2) If a unit is invalid, make ONE independent direct request.
+     * 3) If that also fails validation, skip the unit and keep source HTML.
+     * No sentence-by-sentence or multi-retry recovery is performed here.
+     */
     private static String translateValidatedUnit(Unit u,String candidate,
                                                      String context,
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
         String t=clean(candidate);
-        String sourcePlain=strip(u.inner);
-        // Short headings/captions are much safer with a dedicated single-unit
-        // request than inside a JSON batch. This also fixes cases such as
-        // "Seizure", "Renal", and similar 1–3 word headings.
-        if(sourcePlain.length()<=80){
-            try{
-                String direct=translateDirect(u,context,providers);
-                if(validationReason(u,direct)==null)return direct;
-            }catch(Exception ignored){}
-        }
         String reason=validationReason(u,t);
-        for(int attempt=0;attempt<3;attempt++){
-            if(reason==null)return t;
+        if(reason==null)return t;
 
-            StringBuilder prompt=new StringBuilder();
-            Map<String,String> marks=new LinkedHashMap<>();
-            String protectedSource=protectMarkup(u.inner,marks);
-            prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
-                  .append("Do not omit, summarize, combine away, or invent any sentence. ")
-                  .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged and in the same relative position; placeholders represent HTML/XML tags or entities and must never be translated or deleted. ")
-                  .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
-                  .append("Return ONLY the translated fragment. ")
-                  .append("If the source contains multiple sentences, translate all of them.\n")
-                  .append("The previous output failed validation for this reason: ").append(reason).append("\n")
-                  .append("Correct that problem in the new output.\n\n")
-                  .append(protectedSource);
-
-            String raw=TranslationRouter.translate(prompt.toString(),context,providers);
-            try{
-                String restored=restoreMarkup(raw,marks);
-                t=clean(restored);
-                reason=validationReason(u,t);
-            }catch(IOException markupError){
-                t="";
-                reason="AI làm mất/thay đổi HTML/XML markup hoặc entity";
-            }
-        }
-        if(reason!=null){
-            // Final fallback: translate each source sentence independently.
-            // This prevents a model from silently dropping one or more sentences
-            // after the normal whole-unit retries.
-            String fallback=translateBySentences(u,context,providers);
-            String fallbackReason=validationReason(u,fallback);
-            if(fallbackReason==null)return fallback;
-
-            // Last recovery path: a very small, plain prompt. This is important
-            // for short headings/captions and for models that occasionally return
-            // an empty batch item even though the API request itself succeeded.
+        String directReason;
+        try{
             String direct=translateDirect(u,context,providers);
-            String directReason=validationReason(u,direct);
+            directReason=validationReason(u,direct);
             if(directReason==null)return direct;
-
-            throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
-                    +" sau recovery: "+directReason
-                    +". App đã dừng để tránh xuất EPUB thiếu nội dung.");
+        }catch(Exception e){
+            directReason="direct attempt lỗi: "+safeLog(e.getMessage());
         }
-        return t;
+
+        throw new IOException("SKIP unit "+u.id+" — "+reason
+                +"; direct attempt: "+directReason);
     }
 
     private static boolean looksComplete(Unit u,String translation){
@@ -376,6 +340,11 @@ public final class TranslationJob {
         if(src.toLowerCase(Locale.US).equals("classic signs")
                 &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";
         return null;
+    }
+
+    private static String safeLog(String s){
+        if(s==null)return "unknown";
+        return s.replace('\n',' ').replace('\r',' ').replace('|','/');
     }
 
     private static int sentenceCount(String s){
