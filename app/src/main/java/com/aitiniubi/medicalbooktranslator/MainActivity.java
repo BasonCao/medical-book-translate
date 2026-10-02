@@ -44,10 +44,11 @@ public class MainActivity extends Activity {
     private static final String PREF_CUSTOM_KEY="apiKey_custom";
     private static final String PREF_FREE_POOL="free_ai_pool";
     private static final String PREF_ALLOW_PAID="allow_paid_fallback";
+    private static final String PREF_OFFLINE_MODE="offline_nllb_enabled";
 
     private TextView status,report;
     private ProgressBar progress;
-    private Button analyze,translate,export,reset,logButton,pdfLayout,pdfOneColumn,pdfKeepLayout;
+    private Button analyze,translate,export,reset,logButton,pdfLayout,pdfOneColumn,pdfKeepLayout,offlineButton;
     private File selectedFile,lastOutput,workspace;
     private EpubBook book;
     private PdfBook pdfBook;
@@ -58,6 +59,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
         setContentView(com.aitiniubi.medicalbooktranslator.R.layout.activity_main);
+        TranslationRouter.setOfflineContext(this);
         TextView appTitle=findViewById(R.id.appTitle);
         appTitle.setText("Medical Book Translator V1.11.4");
         prefsHolder=getSharedPreferences("config",MODE_PRIVATE);
@@ -71,6 +73,7 @@ public class MainActivity extends Activity {
         Button glossary=findViewById(R.id.glossaryButton);
         export=findViewById(R.id.exportButton);
         logButton=findViewById(R.id.logButton);
+        offlineButton=findViewById(R.id.offlineButton);
         reset=findViewById(R.id.resetButton);
         pdfLayout=findViewById(R.id.pdfLayoutButton);
         pdfOneColumn=findViewById(R.id.pdfOneColumnButton);
@@ -88,6 +91,8 @@ public class MainActivity extends Activity {
         updatePdfLayoutButtons();
         reset.setOnClickListener(v->resetProgress());
         if(logButton!=null) logButton.setOnClickListener(v->exportTranslationLog());
+        if(offlineButton!=null) offlineButton.setOnClickListener(v->offlineSettings());
+        refreshOfflineButton();
 
         restoreWorkspace();
     }
@@ -318,6 +323,13 @@ public class MainActivity extends Activity {
 
     private List<TranslationRouter.Provider> fallbackProviders(){
         List<TranslationRouter.Provider> profiles=savedProfileProviders();
+        if(prefsHolder.getBoolean(PREF_OFFLINE_MODE,false)){
+            TranslationConfig local=new TranslationConfig();
+            local.endpoint=OfflineNllbTranslator.ENDPOINT;
+            local.model=OfflineNllbTranslator.MODEL_ID;
+            local.apiKey="local";
+            profiles.add(0,new TranslationRouter.Provider("Offline AI — NLLB 600M",local));
+        }
         if(!profiles.isEmpty())return profiles;
         boolean freeOnly=prefsHolder.getBoolean(PREF_FREE_POOL,true),allowPaid=prefsHolder.getBoolean(PREF_ALLOW_PAID,false);
         String selected=providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT));
@@ -901,6 +913,59 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);showError(e);});
             }
         });
+    }
+
+    private void refreshOfflineButton(){
+        if(offlineButton==null)return;
+        boolean enabled=prefsHolder.getBoolean(PREF_OFFLINE_MODE,false);
+        offlineButton.setText((enabled?"🟢":"⚪")+" Offline AI — NLLB 600M\n"+TranslationOfflineManager.status(this));
+    }
+
+    private void offlineSettings(){
+        final boolean installed=OfflineNllbTranslator.isInstalled(this);
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad=(int)(16*getResources().getDisplayMetrics().density);
+        root.setPadding(pad,0,pad,0);
+        TextView info=new TextView(this);
+        info.setText("Dịch offline English → Vietnamese bằng NLLB-200 600M.\n\nModel được tải một lần (~472 MB), sau đó dịch không cần Internet/API key. Model chạy CPU trên thiết bị.");
+        info.setTextSize(14);
+        root.addView(info,new LinearLayout.LayoutParams(-1,-2));
+        ProgressBar pb=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+        pb.setMax(100);pb.setVisibility(View.GONE);
+        root.addView(pb,new LinearLayout.LayoutParams(-1,-2));
+        TextView state=new TextView(this);
+        state.setPadding(0,pad/2,0,pad/2);
+        state.setText(TranslationOfflineManager.status(this));
+        root.addView(state,new LinearLayout.LayoutParams(-1,-2));
+        new AlertDialog.Builder(this).setTitle("🟢 Offline AI")
+                .setView(root)
+                .setNegativeButton("Đóng",null)
+                .setPositiveButton(installed?"TẮT OFFLINE":"TẢI MODEL",null)
+                .create();
+        final AlertDialog dialog=new AlertDialog.Builder(this).setTitle("🟢 Offline AI").setView(root)
+                .setNegativeButton("Đóng",null).setPositiveButton(installed?"TẮT OFFLINE":"TẢI MODEL",null).create();
+        dialog.setOnShowListener(x->{
+            Button positive=dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            positive.setOnClickListener(v->{
+                if(installed){
+                    prefsHolder.edit().putBoolean(PREF_OFFLINE_MODE,false).apply();
+                    refreshOfflineButton();dialog.dismiss();return;
+                }
+                positive.setEnabled(false);pb.setVisibility(View.VISIBLE);pb.setProgress(0);
+                new Thread(()->{
+                    try{
+                        OfflineNllbTranslator.ensureModel(this,(done,total)->runOnUiThread(()->{
+                            pb.setProgress(total<=0?0:(int)Math.min(100,(done*100L)/total));
+                            state.setText(TranslationOfflineManager.status(this)+"\n"+(done/1048576)+" / "+(total/1048576)+" MB");
+                        }));
+                        prefsHolder.edit().putBoolean(PREF_OFFLINE_MODE,true).apply();
+                        runOnUiThread(()->{refreshOfflineButton();dialog.dismiss();Toast.makeText(this,"✅ Offline AI đã sẵn sàng.",Toast.LENGTH_LONG).show();});
+                    }catch(Exception e){runOnUiThread(()->{positive.setEnabled(true);showError(e);});}
+                },"NLLB-Model-Download").start();
+            });
+        });
+        dialog.show();
     }
 
     private void resetProgress(){
