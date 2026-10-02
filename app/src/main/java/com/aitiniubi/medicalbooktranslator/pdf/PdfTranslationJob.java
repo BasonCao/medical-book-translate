@@ -613,6 +613,7 @@ public final class PdfTranslationJob {
 
         try{
             cs.beginText();
+            setTextColor(cs,unit.colorRgb);
             cs.setFont(fonts.get(0).font,size);
             for(int i=0;i<lines.size();i++){
                 String line=lines.get(i);
@@ -664,7 +665,7 @@ public final class PdfTranslationJob {
         }
 
         LayoutUnit safeUnit=new LayoutUnit(unit.source,unit.x,unit.y,
-                safeWidth,unit.height,unit.fontSize,unit.column);
+                safeWidth,unit.height,unit.fontSize,unit.column,unit.colorRgb);
         drawUnit(cs,text,safeUnit,fonts,pageHeight);
     }
 
@@ -699,6 +700,13 @@ public final class PdfTranslationJob {
             try{cs.endText();}catch(Exception ignored){}
             throw e;
         }
+    }
+
+    private static void setTextColor(PDPageContentStream cs,int rgb)throws IOException{
+        float r=((rgb>>16)&255)/255f;
+        float g=((rgb>>8)&255)/255f;
+        float b=(rgb&255)/255f;
+        cs.setNonStrokingColor(r,g,b);
     }
 
     private static List<String> wrapText(String text,List<FontSlot> fonts,float size,float maxWidth)
@@ -973,10 +981,17 @@ public final class PdfTranslationJob {
 
     private static final class LayoutStripper extends PDFTextStripper{
         final List<TextPosition> glyphs=new ArrayList<>();
+        final Map<TextPosition,Integer> colorByGlyph=new IdentityHashMap<>();
         LayoutStripper()throws IOException{super();}
         @Override protected void processTextPosition(TextPosition text){
             String u=text.getUnicode();
-            if(u!=null&&!u.isEmpty())glyphs.add(text);
+            if(u!=null&&!u.isEmpty()){
+                glyphs.add(text);
+                try{
+                    PDColor color=getGraphicsState().getNonStrokingColor();
+                    if(color!=null&&!color.isPattern())colorByGlyph.put(text,color.toRGB());
+                }catch(Exception ignored){}
+            }
             super.processTextPosition(text);
         }
 
@@ -1140,7 +1155,7 @@ public final class PdfTranslationJob {
                 if(newUnit){
                     if(current!=null)out.add(current);
                     current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
-                            columnOf(line,pageWidth));
+                            columnOf(line,pageWidth),line.colorRgb);
                 }else{
                     current.source += " " + line.source;
                     float right=Math.max(current.x+current.width,line.x+line.width);
@@ -1384,8 +1399,14 @@ public final class PdfTranslationJob {
             if(piece==null||piece.isEmpty())return;
             StringBuilder s=new StringBuilder();float minX=Float.MAX_VALUE,minY=Float.MAX_VALUE;
             float maxX=0,maxY=0,size=0;TextPosition prev=null;
+            int colorRgb=0x000000;
+            boolean colorCaptured=false;
             for(TextPosition p:piece){
                 String u=p.getUnicode();if(u==null)continue;
+                if(!colorCaptured){
+                    Integer color=colorByGlyph.get(p);
+                    if(color!=null){colorRgb=color;colorCaptured=true;}
+                }
                 if(prev!=null){
                     float gap=p.getX()-(prev.getX()+prev.getWidth());
                     float spaceThreshold=Math.max(0.85f,
@@ -1396,7 +1417,8 @@ public final class PdfTranslationJob {
                 maxX=Math.max(maxX,p.getX()+p.getWidth());maxY=Math.max(maxY,p.getY()+p.getHeight());
                 size=Math.max(size,p.getFontSizeInPt());prev=p;
             }
-            if(s.length()>0&&maxX>minX)out.add(new LayoutLine(s.toString().trim(),minX,minY,maxX-minX,maxY-minY,size));
+            if(s.length()>0&&maxX>minX)
+                out.add(new LayoutLine(s.toString().trim(),minX,minY,maxX-minX,maxY-minY,size,colorRgb));
         }
     }
 
