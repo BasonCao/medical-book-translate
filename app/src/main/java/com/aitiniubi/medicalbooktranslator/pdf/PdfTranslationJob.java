@@ -613,7 +613,7 @@ public final class PdfTranslationJob {
 
         try{
             cs.beginText();
-            setTextColor(cs,unit.colorRgb);
+            setTextColor(cs,0x000000);
             cs.setFont(fonts.get(0).font,size);
             for(int i=0;i<lines.size();i++){
                 String line=lines.get(i);
@@ -665,7 +665,7 @@ public final class PdfTranslationJob {
         }
 
         LayoutUnit safeUnit=new LayoutUnit(unit.source,unit.x,unit.y,
-                safeWidth,unit.height,unit.fontSize,unit.column,unit.colorRgb);
+                safeWidth,unit.height,unit.fontSize,unit.column);
         drawUnit(cs,text,safeUnit,fonts,pageHeight);
     }
 
@@ -1155,7 +1155,7 @@ public final class PdfTranslationJob {
                 if(newUnit){
                     if(current!=null)out.add(current);
                     current=new LayoutUnit(line.source,line.x,line.y,line.width,line.height,line.fontSize,
-                            columnOf(line,pageWidth),line.colorRgb);
+                            columnOf(line,pageWidth));
                 }else{
                     current.source += " " + line.source;
                     float right=Math.max(current.x+current.width,line.x+line.width);
@@ -1418,7 +1418,7 @@ public final class PdfTranslationJob {
                 size=Math.max(size,p.getFontSizeInPt());prev=p;
             }
             if(s.length()>0&&maxX>minX)
-                out.add(new LayoutLine(s.toString().trim(),minX,minY,maxX-minX,maxY-minY,size,colorRgb));
+                out.add(new LayoutLine(s.toString().trim(),minX,minY,maxX-minX,maxY-minY,size));
         }
     }
 
