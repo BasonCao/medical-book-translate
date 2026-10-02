@@ -46,12 +46,23 @@ public final class TranslationRouter {
         }
 
         List<String> failures = new ArrayList<>();
+        boolean sawQuotaDisabledProvider = false;
         for (Provider p : providers) {
             if (p == null || p.config == null || isBlank(p.config.endpoint) || isBlank(p.config.model) || isBlank(p.config.apiKey)) {
                 continue;
             }
+            long now = System.currentTimeMillis();
             long disabledUntil = DISABLED_UNTIL.getOrDefault(p.name, 0L);
-            if (disabledUntil > System.currentTimeMillis()) {
+            if (disabledUntil > now) {
+                // Providers are disabled here only after a quota/rate-limit response.
+                // Treating this as a generic "all providers failed" error could make
+                // the job continue or retry unnecessarily on the next worker.
+                sawQuotaDisabledProvider = true;
+                if (logger != null) {
+                    logger.event(stage, "PROVIDER_SKIPPED_QUOTA name=" + p.name
+                            + " model=" + p.config.model
+                            + " remainingMs=" + (disabledUntil-now));
+                }
                 continue;
             }
             try {
@@ -82,6 +93,10 @@ public final class TranslationRouter {
                 if (logger != null) logger.event(stage, "PROVIDER_FAIL name=" + p.name + " model=" + p.config.model + " reason=" + message);
                 failures.add(p.name + ": " + message);
             }
+        }
+
+        if (sawQuotaDisabledProvider && failures.isEmpty()) {
+            throw new QuotaException("AI provider đang bị tạm khóa do quota/rate limit; tạm dừng để tránh phát sinh thêm request.");
         }
 
         StringBuilder out = new StringBuilder("Tất cả AI provider đã cấu hình đều thất bại.");
