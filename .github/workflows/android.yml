@@ -38,12 +38,15 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF \
             -DLLAMA_OPENSSL=OFF \
+            -DLLAMA_CURL=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
             -DLLAMA_BUILD_TOOLS=ON \
             -DLLAMA_BUILD_EXAMPLES=ON
           cmake --build llama-build --config Release --target nllb-simple -j 2
           test -f llama-build/bin/nllb-simple
-          mkdir -p app/src/main/jniLibs/arm64-v8a
-          cp llama-build/bin/nllb-simple app/src/main/jniLibs/arm64-v8a/libnllb-simple.so
+          mkdir -p app/src/main/assets
+          cp llama-build/bin/nllb-simple app/src/main/assets/nllb-simple
+          chmod 755 app/src/main/assets/nllb-simple
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
