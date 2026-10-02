@@ -25,8 +25,8 @@ public final class TranslationJob {
     private static final Pattern ANY_BLOCK_TAG=Pattern.compile(
         "<(?:p|h[1-6]|figcaption|caption|th|td|li|blockquote|dt|dd|pre|address|div|section|article|aside)\\b",
         Pattern.CASE_INSENSITIVE);
-    private static final int MAX_BATCH_UNITS=8;
-    private static final int MAX_BATCH_CHARS=12000;
+    private static final int MAX_BATCH_UNITS=10;
+    private static final int MAX_BATCH_CHARS=16000;
     private static final Pattern MARKUP_TOKEN=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
 
     private TranslationJob(){}
@@ -44,6 +44,8 @@ public final class TranslationJob {
                 for(Unit u:units) if(u.translatable) total++;
                 TranslationStateStore store=new TranslationStateStore(workspace);
                 store.initialize(sourceHash,source.getName(),total);
+                TranslationLogger logger=new TranslationLogger(workspace);
+                TranslationLogger.bind(logger);
                 logger.start(source.getName(), sourceHash, total);
                 logger.event("QUEUE", "translatable=" + total);
 
@@ -67,7 +69,7 @@ public final class TranslationJob {
                 }
 
                 final List<GlossaryManager.Term> glossary=GlossaryManager.load(workspace);
-                final int parallelism=3;
+                final int parallelism=4;
                 java.util.concurrent.ExecutorService pool=java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<BatchResult> completion=new java.util.concurrent.ExecutorCompletionService<>(pool);
                 int next=0,submitted=0,completedBatches=0;
@@ -91,6 +93,27 @@ public final class TranslationJob {
                         Map<String,String> got=br.translations;
                         List<Unit> batch=br.batch;
                         int batchNo=completedBatches;
+                        // A provider quota/rate-limit failure is a batch-level failure.
+                        // Do NOT launch one recovery request per unit: that only burns
+                        // more quota and makes the book appear to hang.
+                        if(br.failureReason!=null && isProviderUnavailable(br.failureReason)){
+                            for(Unit u:batch){
+                                try{
+                                    store.put(new TranslationStateStore.Record(
+                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",1));
+                                }catch(Exception ignored){}
+                                logger.event("UNIT_SKIP","unit="+shortId(u.id)+" file="+u.file
+                                        +" reason=provider unavailable: "+safeLog(br.failureReason));
+                            }
+                            logger.event("BATCH_SKIP","batch="+batchNo+" units="+batch.size()
+                                    +" reason=provider unavailable; no per-unit retry");
+                            store.saveManifest(sourceHash,source.getName(),total,done);
+                            if(next<pending.size()){
+                                List<Unit> nextBatch=makeBatch(pending,next);next+=nextBatch.size();submitted++;
+                                completion.submit(()->translateOneBatchSafe(nextBatch,providers,glossary));
+                            }
+                            continue;
+                        }
                         for(Unit u:batch){
                             String t=got.get(u.id);
                             try{
@@ -105,11 +128,13 @@ public final class TranslationJob {
                                 // HTML for this unit, so no source content can be lost.
                                 try{
                                     store.put(new TranslationStateStore.Record(
-                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",3));
+                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",1));
                                 }catch(Exception ignored){}
+                                logger.event("UNIT_SKIP","unit="+shortId(u.id)+" file="+u.file
+                                        +" reason="+safeLog(unitError.getMessage()));
                                 listener.onProgress(done,total,batchNo,
                                         "SOURCE_ONLY unit "+u.id.substring(0,Math.min(12,u.id.length()))
-                                        +" — giữ nguyên nguồn; sẽ retry ở lần Tiếp tục. "
+                                        +" — bỏ qua, ghi log; sẽ retry ở lần Tiếp tục. "
                                         +unitError.getMessage());
                             }
                         }
@@ -131,7 +156,7 @@ public final class TranslationJob {
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
-            }catch(Exception e){listener.onError(e);}
+            }catch(Exception e){logger.error("JOB_ERROR",e);listener.onError(e);}finally{TranslationLogger.unbind();}
         },"epub-translation").start();
     }
 
@@ -199,68 +224,30 @@ public final class TranslationJob {
         Matcher m=Pattern.compile("[À-ỹĐđ]{2,}").matcher(s);int n=0;while(m.find())n++;return n;
     }
 
+    /**
+     * Fast validation policy:
+     * - Trust a valid batch result.
+     * - If invalid, make ONE direct recovery request.
+     * - If still invalid, skip the unit and continue.
+     * No 3x retry + sentence-by-sentence + final direct cascade.
+     */
     private static String translateValidatedUnit(Unit u,String candidate,
                                                      String context,
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
         String t=clean(candidate);
-        String sourcePlain=strip(u.inner);
-        // Short headings/captions are much safer with a dedicated single-unit
-        // request than inside a JSON batch. This also fixes cases such as
-        // "Seizure", "Renal", and similar 1–3 word headings.
-        if(sourcePlain.length()<=80){
-            try{
-                String direct=translateDirect(u,context,providers);
-                if(validationReason(u,direct)==null)return direct;
-            }catch(Exception ignored){}
-        }
         String reason=validationReason(u,t);
-        for(int attempt=0;attempt<3;attempt++){
-            if(reason==null)return t;
+        if(reason==null)return t;
 
-            StringBuilder prompt=new StringBuilder();
-            Map<String,String> marks=new LinkedHashMap<>();
-            String protectedSource=protectMarkup(u.inner,marks);
-            prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
-                  .append("Do not omit, summarize, combine away, or invent any sentence. ")
-                  .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged and in the same relative position; placeholders represent HTML/XML tags or entities and must never be translated or deleted. ")
-                  .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
-                  .append("Return ONLY the translated fragment. ")
-                  .append("If the source contains multiple sentences, translate all of them.\n")
-                  .append("The previous output failed validation for this reason: ").append(reason).append("\n")
-                  .append("Correct that problem in the new output.\n\n")
-                  .append(protectedSource);
-
-            String raw=TranslationRouter.translate(prompt.toString(),context,providers);
-            try{
-                String restored=restoreMarkup(raw,marks);
-                t=clean(restored);
-                reason=validationReason(u,t);
-            }catch(IOException markupError){
-                t="";
-                reason="AI làm mất/thay đổi HTML/XML markup hoặc entity";
-            }
-        }
-        if(reason!=null){
-            // Final fallback: translate each source sentence independently.
-            // This prevents a model from silently dropping one or more sentences
-            // after the normal whole-unit retries.
-            String fallback=translateBySentences(u,context,providers);
-            String fallbackReason=validationReason(u,fallback);
-            if(fallbackReason==null)return fallback;
-
-            // Last recovery path: a very small, plain prompt. This is important
-            // for short headings/captions and for models that occasionally return
-            // an empty batch item even though the API request itself succeeded.
+        try{
             String direct=translateDirect(u,context,providers);
             String directReason=validationReason(u,direct);
             if(directReason==null)return direct;
-
-            throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
-                    +" sau recovery: "+directReason
-                    +". App đã dừng để tránh xuất EPUB thiếu nội dung.");
+            throw new IOException(directReason);
+        }catch(Exception e){
+            throw new IOException("validation failed: "+reason+"; direct recovery failed: "
+                    +safeLog(e.getMessage()),e);
         }
-        return t;
     }
 
     private static boolean looksComplete(Unit u,String translation){
@@ -295,7 +282,24 @@ public final class TranslationJob {
               .append("Do not omit, merge, summarize, or reorder any sentence. ")
               .append("Preserve numbers, ranges, abbreviations, gene names, units and citation markers. ")
               .append("This is a recovery pass because the previous translation omitted sentence(s).\\n");\n        for(int i=0;i<sentences.size();i++){\n            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\
-");\n        }\n\n        String response=TranslationRouter.translate(prompt.toString(),context,providers).trim();\n        int a=response.indexOf('['),b=response.lastIndexOf(']');\n        if(a<0||b<=a)throw new IOException("Fallback từng câu không trả về JSON.");\n        JSONArray arr=new JSONArray(response.substring(a,b+1));\n        if(arr.length()!=sentences.size())\n            throw new IOException("Fallback từng câu trả về "+arr.length()+"/"+sentences.size()+" câu.");\n        StringBuilder out=new StringBuilder();\n        for(int i=0;i<arr.length();i++){\n            String t=arr.optString(i,"").trim();\n            if(t.isEmpty())throw new IOException("Fallback từng câu có câu trống.");\n            if(i>0)out.append(" ");\n            out.append(t);\n        }\n        return restoreMarkup(out.toString(),marks);\n    }\n\n    private static List<String> splitSentences(String s){\n        List<String> out=new ArrayList<>();\n        if(s==null)return out;\n        Matcher m=Pattern.compile(".*?(?:[.!?](?=\\s|$)|$)",Pattern.DOTALL).matcher(s.trim());\n        while(m.find()){\n            String x=m.group().trim();\n            if(!x.isEmpty())out.add(x);\n            if(m.end()==s.trim().length())break;\n        }\n        return out;\n    }\n\n    private static String validationReason(Unit u,String translation){\n        if(blank(translation))return "AI trả về nội dung trống";\n        String src=strip(u.inner);\n        String dst=strip(translation);\n        if(src.length()<2)return null;\n        if(dst.length()==0)return "bản dịch không có nội dung nhìn thấy";\n\n        if(src.length()>=80 && dst.length()<Math.max(20,src.length()*0.30))\n            return "bản dịch ngắn bất thường so với nội dung nguồn";\n\n        int srcSent=sentenceCount(src);\n        int dstSent=sentenceCount(dst);\n        if(srcSent>=3 && dstSent<srcSent-1)\n            return "thiếu câu (nguồn "+srcSent+" câu, bản dịch "+dstSent+" câu)";\n        if(srcSent>=2 && dstSent<1)\n            return "không có câu trong bản dịch";\n\n        List<String> nums=importantTokens(src);\n        if(!nums.isEmpty()){\n            Map<String,Integer> have=new HashMap<>();\n            for(String x:importantTokens(dst))have.put(x,have.getOrDefault(x,0)+1);\n            Map<String,Integer> need=new HashMap<>();\n            for(String x:nums)need.put(x,need.getOrDefault(x,0)+1);\n            int covered=0,total=0;\n            for(Map.Entry<String,Integer> e:need.entrySet()){\n                total+=e.getValue();\n                covered+=Math.min(e.getValue(),have.getOrDefault(e.getKey(),0));\n            }\n            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))\n                return "thiếu số liệu/citation quan trọng ("+covered+"/"+total+" token được giữ lại)";\n        }\n\n        String low=dst.toLowerCase(Locale.US);\n        if(src.toLowerCase(Locale.US).equals("feature")\n                &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return "heading Feature chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("renal")\n                &&!low.contains("thận"))return "heading Renal chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("seizure")\n                &&!low.contains("co giật"))return "heading Seizure chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("prenatal")\n                &&!low.contains("trước sinh"))return "heading Prenatal chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("definition")\n                &&!low.contains("định nghĩa"))return "heading Definition chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("classic signs")\n                &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";\n        return null;\n    }\n\n    private static int sentenceCount(String s){\n        if(s==null||s.trim().isEmpty())return 0;\n        Matcher m=Pattern.compile("[.!?](?=\\s|$)").matcher(s);\n        int n=0;while(m.find())n++;\n        return Math.max(1,n);\n    }\n\n    private static List<String> importantTokens(String s){\n        List<String> out=new ArrayList<>();\n        if(s==null)return out;\n        Matcher m=Pattern.compile(\n                "(?i)(?<![A-Za-z0-9])(?:\\d+(?:[.,]\\d+)?(?:–|-|to)\\d+(?:[.,]\\d+)?%?|\\d+(?:[.,]\\d+)?%|\\d+:[0-9]+|[A-Z]{2,}\\d*(?:[.-]\\d+)+)(?![A-Za-z0-9])")\n                .matcher(s);\n        while(m.find())out.add(m.group().toLowerCase(Locale.US));\n        return out;\n    }\n\n    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }\n\n    private static List<Unit> makeBatch(List<Unit> p,int start){\n        List<Unit> b=new ArrayList<>();int chars=0;\n        for(int i=start;i<p.size()&&b.size()<MAX_BATCH_UNITS;i++){\n            Unit u=p.get(i);int cost=u.inner.length()+180;\n            if(!b.isEmpty()&&chars+cost>MAX_BATCH_CHARS)break;\n            b.add(u);chars+=cost;\n        }\n        return b;\n    }\n\n    private static BatchResult translateOneBatchSafe(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary){\n        try{\n            return translateOneBatch(batch,providers,glossary);\n        }catch(Exception e){\n            // Keep the batch alive so each unit gets its own recovery attempt.\n            // An empty map means no translation is trusted; the original EPUB\n            // source is retained for every unit that still fails.\n            return new BatchResult(batch,new HashMap<>(),\n                    "Batch failed; recovering units independently. "+e.getMessage());\n        }\n    }\n\n    private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{\n        StringBuilder context=new StringBuilder("Medical obstetric ultrasound / fetal medicine textbook. Translate English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations and inline HTML/XML markup.");\n        StringBuilder combined=new StringBuilder();\n        for(Unit u:batch)combined.append(strip(u.inner)).append("
+");\n        }\n\n        String response=TranslationRouter.translate(prompt.toString(),context,providers).trim();\n        int a=response.indexOf('['),b=response.lastIndexOf(']');\n        if(a<0||b<=a)throw new IOException("Fallback từng câu không trả về JSON.");\n        JSONArray arr=new JSONArray(response.substring(a,b+1));\n        if(arr.length()!=sentences.size())\n            throw new IOException("Fallback từng câu trả về "+arr.length()+"/"+sentences.size()+" câu.");\n        StringBuilder out=new StringBuilder();\n        for(int i=0;i<arr.length();i++){\n            String t=arr.optString(i,"").trim();\n            if(t.isEmpty())throw new IOException("Fallback từng câu có câu trống.");\n            if(i>0)out.append(" ");\n            out.append(t);\n        }\n        return restoreMarkup(out.toString(),marks);\n    }\n\n    private static List<String> splitSentences(String s){\n        List<String> out=new ArrayList<>();\n        if(s==null)return out;\n        Matcher m=Pattern.compile(".*?(?:[.!?](?=\\s|$)|$)",Pattern.DOTALL).matcher(s.trim());\n        while(m.find()){\n            String x=m.group().trim();\n            if(!x.isEmpty())out.add(x);\n            if(m.end()==s.trim().length())break;\n        }\n        return out;\n    }\n\n    private static String validationReason(Unit u,String translation){\n        if(blank(translation))return "AI trả về nội dung trống";\n        String src=strip(u.inner);\n        String dst=strip(translation);\n        if(src.length()<2)return null;\n        if(dst.length()==0)return "bản dịch không có nội dung nhìn thấy";\n\n        if(src.length()>=80 && dst.length()<Math.max(20,src.length()*0.30))\n            return "bản dịch ngắn bất thường so với nội dung nguồn";\n\n        int srcSent=sentenceCount(src);\n        int dstSent=sentenceCount(dst);\n        if(srcSent>=2 && dstSent<srcSent)\n            return "thiếu câu (nguồn "+srcSent+" câu, bản dịch "+dstSent+" câu)";\n        if(srcSent>=2 && dstSent<1)\n            return "không có câu trong bản dịch";\n\n        List<String> nums=importantTokens(src);\n        if(!nums.isEmpty()){\n            Map<String,Integer> have=new HashMap<>();\n            for(String x:importantTokens(dst))have.put(x,have.getOrDefault(x,0)+1);\n            Map<String,Integer> need=new HashMap<>();\n            for(String x:nums)need.put(x,need.getOrDefault(x,0)+1);\n            int covered=0,total=0;\n            for(Map.Entry<String,Integer> e:need.entrySet()){\n                total+=e.getValue();\n                covered+=Math.min(e.getValue(),have.getOrDefault(e.getKey(),0));\n            }\n            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))\n                return "thiếu số liệu/citation quan trọng ("+covered+"/"+total+" token được giữ lại)";\n        }\n\n        String low=dst.toLowerCase(Locale.US);\n        if(src.toLowerCase(Locale.US).equals("feature")\n                &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return "heading Feature chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("renal")\n                &&!low.contains("thận"))return "heading Renal chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("seizure")\n                &&!low.contains("co giật"))return "heading Seizure chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("prenatal")\n                &&!low.contains("trước sinh"))return "heading Prenatal chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("definition")\n                &&!low.contains("định nghĩa"))return "heading Definition chưa được dịch";\n        if(src.toLowerCase(Locale.US).equals("classic signs")\n                &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";\n        return null;\n    }\n\n    private static boolean isProviderUnavailable(String message){
+        if(message==null)return false;
+        String s=message.toLowerCase(Locale.US);
+        return s.contains("http 429")||s.contains("quota")||s.contains("rate limit")
+                ||s.contains("resource_exhausted")||s.contains("all ai provider");
+    }
+
+    private static String shortId(String s){
+        if(s==null)return "";
+        return s.substring(0,Math.min(12,s.length()));
+    }
+
+    private static String safeLog(String s){
+        if(s==null)return "unknown";
+        return s.replace('\n',' ').replace('\r',' ').replace('|','/');
+    }
+
+    private static int sentenceCount(String s){\n        if(s==null||s.trim().isEmpty())return 0;\n        Matcher m=Pattern.compile("[.!?](?=\\s|$)").matcher(s);\n        int n=0;while(m.find())n++;\n        return Math.max(1,n);\n    }\n\n    private static List<String> importantTokens(String s){\n        List<String> out=new ArrayList<>();\n        if(s==null)return out;\n        Matcher m=Pattern.compile(\n                "(?i)(?<![A-Za-z0-9])(?:\\d+(?:[.,]\\d+)?(?:–|-|to)\\d+(?:[.,]\\d+)?%?|\\d+(?:[.,]\\d+)?%|\\d+:[0-9]+|[A-Z]{2,}\\d*(?:[.-]\\d+)+)(?![A-Za-z0-9])")\n                .matcher(s);\n        while(m.find())out.add(m.group().toLowerCase(Locale.US));\n        return out;\n    }\n\n    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }\n\n    private static List<Unit> makeBatch(List<Unit> p,int start){\n        List<Unit> b=new ArrayList<>();int chars=0;\n        for(int i=start;i<p.size()&&b.size()<MAX_BATCH_UNITS;i++){\n            Unit u=p.get(i);int cost=u.inner.length()+180;\n            if(!b.isEmpty()&&chars+cost>MAX_BATCH_CHARS)break;\n            b.add(u);chars+=cost;\n        }\n        return b;\n    }\n\n    private static BatchResult translateOneBatchSafe(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary){\n        try{\n            return translateOneBatch(batch,providers,glossary);\n        }catch(Exception e){\n            // Keep the batch alive so each unit gets its own recovery attempt.\n            // An empty map means no translation is trusted; the original EPUB\n            // source is retained for every unit that still fails.\n            return new BatchResult(batch,new HashMap<>(),\n                    "Batch failed; recovering units independently. "+e.getMessage());\n        }\n    }\n\n    private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{\n        StringBuilder context=new StringBuilder("Medical obstetric ultrasound / fetal medicine textbook. Translate English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations and inline HTML/XML markup.");\n        StringBuilder combined=new StringBuilder();\n        for(Unit u:batch)combined.append(strip(u.inner)).append("
 ");\n        String gt=GlossaryManager.promptTerms(combined.toString(),glossary);\n        if(!gt.isEmpty())context.append("
 
 ").append(gt);\n        Map<String,String> got=translateBatch(batch,context.toString(),providers);\n        return new BatchResult(batch,got,context.toString());\n    }\n\n    private static Map<String,String> translateBatch(List<Unit> batch,String context,List<TranslationRouter.Provider> providers)throws Exception{\n        StringBuilder s=new StringBuilder();\n        s.append("Return ONLY a JSON array. Each object has exactly id and translation. Keep IDs unchanged. ");\n        s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.
