@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Path;
 import android.graphics.PointF;
 import com.aitiniubi.medicalbooktranslator.translation.TranslationRouter;
+import com.aitiniubi.medicalbooktranslator.translation.TranslationLogger;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
 import com.tom_roush.pdfbox.pdmodel.PDPage;
@@ -62,8 +63,13 @@ public final class PdfTranslationJob {
                     }
                 }
 
+                TranslationLogger logger=new TranslationLogger(workspace);
+                TranslationLogger.bind(logger);
+                logger.start(source.getName(), fileHash(source), total);
+                logger.event("PDF_QUEUE","pages="+total);
                 Map<Integer,String> translations=new HashMap<>();
                 int done=0;
+                int skipped=0;
                 boolean layoutV9="9".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
                     String t=layoutV9?state.getProperty("page."+i,""):"";
@@ -84,7 +90,7 @@ public final class PdfTranslationJob {
                 // V1.9.2 stored one translated string per page. That is not enough
                 // for multi-column PDFs because PDF text drawing order can differ
                 // from visual reading order. V1.9.3 uses stable UNIT markers.
-                final int parallelism=3;
+                final int parallelism=4;
                 java.util.concurrent.ExecutorService pool=
                         java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<PageResult> completion=
@@ -95,21 +101,33 @@ public final class PdfTranslationJob {
                     final List<LayoutUnit> units=pageUnits.get(page);
                     if(units==null||units.isEmpty())continue;
                     completion.submit(()->{
-                        StringBuilder prompt=new StringBuilder();
-                        prompt.append("Translate the following medical textbook page from English to professional Vietnamese.\\n")
-                              .append("IMPORTANT: Keep every UNIT marker exactly unchanged. Do not merge, split, reorder, omit, summarize, or invent units.\\n")
-                              .append("Translate the text INSIDE each unit only. Preserve medical terminology, abbreviations, numbers, units, citations, URLs, formulas, gene/drug names.\\n")
-                              .append("Return plain text only, using the same UNIT markers.\\n\\n");
-                        for(int i=0;i<units.size();i++){
-                            prompt.append("[[[UNIT_").append(i).append("]]]\\n")
-                                  .append(units.get(i).source).append("\\n");
+                        TranslationLogger.bind(logger);
+                        long started=System.currentTimeMillis();
+                        try{
+                            logger.event("PAGE_START","page="+pageNo+" units="+units.size());
+                            StringBuilder prompt=new StringBuilder();
+                            prompt.append("Translate the following medical textbook page from English to professional Vietnamese.\\n")
+                                  .append("IMPORTANT: Keep every UNIT marker exactly unchanged. Do not merge, split, reorder, omit, summarize, or invent units.\\n")
+                                  .append("Translate the text INSIDE each unit only. Preserve medical terminology, abbreviations, numbers, units, citations, URLs, formulas, gene/drug names.\\n")
+                                  .append("Return plain text only, using the same UNIT markers.\\n\\n");
+                            for(int i=0;i<units.size();i++){
+                                prompt.append("[[[UNIT_").append(i).append("]]]\\n")
+                                      .append(units.get(i).source).append("\\n");
+                            }
+                            String translated=TranslationRouter.translate(prompt.toString(),
+                                    "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers);
+                            if(translated==null||translated.trim().isEmpty())
+                                throw new IOException("AI trả về bản dịch rỗng ở trang "+pageNo);
+                            String normalized=parseUnitResponse(translated,units.size(),pageNo);
+                            logger.event("PAGE_OK","page="+pageNo+" elapsedMs="+(System.currentTimeMillis()-started));
+                            return new PageResult(pageNo,normalized);
+                        }catch(Exception e){
+                            logger.event("PAGE_SKIP","page="+pageNo+" elapsedMs="+(System.currentTimeMillis()-started)
+                                    +" reason="+safeLog(e.getMessage()));
+                            return new PageResult(pageNo,null);
+                        }finally{
+                            TranslationLogger.unbind();
                         }
-                        String translated=TranslationRouter.translate(prompt.toString(),
-                                "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers);
-                        if(translated==null||translated.trim().isEmpty())
-                            throw new IOException("AI trả về bản dịch rỗng ở trang "+pageNo);
-                        String normalized=parseUnitResponse(translated,units.size(),pageNo);
-                        return new PageResult(pageNo,normalized);
                     });
                     submitted++;
                 }
@@ -118,15 +136,23 @@ public final class PdfTranslationJob {
                     state.setProperty("pdf.layout.version","9");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
+                        if(result.text==null||result.text.trim().isEmpty()){
+                            skipped++;
+                            logger.event("PAGE_SKIPPED","page="+result.page+" reason=translation failed; source page retained");
+                            listener.onProgress(done+skipped,total,result.page,
+                                    "Bỏ qua trang PDF "+result.page+" — ghi log, giữ nguyên trang nguồn");
+                            continue;
+                        }
                         translations.put(result.page,result.text);
                         synchronized(state){
                             state.setProperty("page."+result.page,result.text);
                             save(state,stateFile);
                         }
                         done++;
-                        listener.onProgress(done,total,result.page,
-                                "Đã dịch PDF "+done+"/"+total+" trang | bố cục block + "+parallelism+" trang song song");
+                        listener.onProgress(done+skipped,total,result.page,
+                                "Đã dịch PDF "+done+"/"+total+" trang | bỏ qua "+skipped+" | "+parallelism+" trang song song");
                     }
+                    logger.event("PDF_QUEUE_DONE","translated="+done+" skipped="+skipped+" total="+total);
                 }catch(java.util.concurrent.ExecutionException e){
                     Throwable cause=e.getCause();
                     if(cause instanceof Exception)throw (Exception)cause;
@@ -141,6 +167,8 @@ public final class PdfTranslationJob {
                 listener.onDone(output);
             }catch(Exception e){
                 listener.onError(e);
+            }finally{
+                TranslationLogger.unbind();
             }
         },"pdf-translation").start();
     }
@@ -164,7 +192,11 @@ public final class PdfTranslationJob {
                 PDPage page=sourcePages.get(i);
                 List<LayoutUnit> units=extractLayoutUnits(doc,i+1);
                 if(units.isEmpty())continue;
-                Map<Integer,String> translated=parseUnitMap(translations.get(i+1),units.size());
+                String pageTranslation=translations.get(i+1);
+                // Failed pages are deliberately left untouched in the source PDF.
+                // Never remove English text when the translation for this page is absent.
+                if(pageTranslation==null||pageTranslation.trim().isEmpty())continue;
+                Map<Integer,String> translated=parseUnitMap(pageTranslation,units.size());
                 if(singleColumn && hasTwoColumnLayout(units)){
                     buildSingleColumnPage(doc,page,units,translated,fonts);
                 }else{
@@ -1728,6 +1760,24 @@ public final class PdfTranslationJob {
         final int page;
         final String text;
         PageResult(int page,String text){this.page=page;this.text=text;}
+    }
+
+    private static String safeLog(String s){
+        if(s==null)return "unknown";
+        return s.replace('\n',' ').replace('\r',' ').replace('|','/');
+    }
+
+    private static String fileHash(File f){
+        try{
+            java.security.MessageDigest md=java.security.MessageDigest.getInstance("SHA-256");
+            try(InputStream in=new FileInputStream(f)){
+                byte[] b=new byte[16384]; int n;
+                while((n=in.read(b))>0)md.update(b,0,n);
+            }
+            StringBuilder s=new StringBuilder();
+            for(byte x:md.digest())s.append(String.format(Locale.US,"%02x",x));
+            return s.toString();
+        }catch(Exception e){return "unknown";}
     }
 
     private static void save(Properties p,File f)throws IOException{
