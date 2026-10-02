@@ -72,6 +72,13 @@ public final class TranslationJob {
         }
     }
 
+    private static void loggerSafeTopLevelPause(File workspace,File source,File output,Exception reason){
+        try{
+            TranslationLogger logger=new TranslationLogger(workspace);
+            logger.event("QUOTA_PAUSE","top-level reason="+safeMessage(reason)+" source="+(source==null?"":source.getName()));
+        }catch(Exception ignored){}
+    }
+
     private static String shortId(String id){
         return id==null?"unknown":id.substring(0,Math.min(12,id.length()));
     }
@@ -177,6 +184,7 @@ public final class TranslationJob {
                                             u.id,u.file,u.sourceHash,"","SOURCE_ONLY",1));
                                 }catch(Exception ignored){}
                                 logUnitFailure(logger,u,unitError);
+                                logger.event("UNIT_STATE","id="+shortId(u.id)+" status=SOURCE_ONLY done="+done+"/"+total);
                                 listener.onProgress(done,total,batchNo,
                                         "SOURCE_ONLY unit "+shortId(u.id)
                                         +" — lỗi đã ghi log; tiếp tục unit khác.");
@@ -200,7 +208,17 @@ public final class TranslationJob {
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
-            }catch(Exception e){listener.onError(e);}
+            }catch(Exception e){
+                if(isQuotaError(e)){
+                    Exception reason = e instanceof QuotaPauseException ? e : quota(e);
+                    try{
+                        loggerSafeTopLevelPause(workspace, source, output, reason);
+                    }catch(Exception ignored){}
+                    listener.onPaused(new File(workspace,"translated-current.epub"),0,total,reason);
+                }else{
+                    listener.onError(e);
+                }
+            }
         },"epub-translation").start();
     }
 
@@ -273,70 +291,51 @@ public final class TranslationJob {
             throws Exception{
         String t=clean(candidate);
         String sourcePlain=strip(u.inner);
-        // Short headings/captions are much safer with a dedicated single-unit
-        // request than inside a JSON batch. This also fixes cases such as
-        // "Seizure", "Renal", and similar 1–3 word headings.
+
+        // Short headings/captions get one direct request first because JSON
+        // batching can be unreliable for very small units.
         if(sourcePlain.length()<=80){
             try{
                 String direct=translateDirect(u,context,providers);
                 if(validationReason(u,direct)==null)return direct;
             }catch(Exception directError){
                 if(isQuotaError(directError)) throw quota(directError);
+                // Fall through to the single recovery request below.
             }
         }
+
         String reason=validationReason(u,t);
         if(reason==null)return t;
-        {
-            if(reason==null)return t;
 
-            StringBuilder prompt=new StringBuilder();
-            Map<String,String> marks=new LinkedHashMap<>();
-            String protectedSource=protectMarkup(u.inner,marks);
-            prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
-                  .append("Do not omit, summarize, combine away, or invent any sentence. ")
-                  .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged and in the same relative position; placeholders represent HTML/XML tags or entities and must never be translated or deleted. ")
-                  .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
-                  .append("Return ONLY the translated fragment. ")
-                  .append("If the source contains multiple sentences, translate all of them.\n")
-                  .append("The previous output failed validation for this reason: ").append(reason).append("\n")
-                  .append("Correct that problem in the new output.\n\n")
-                  .append(protectedSource);
+        // Exactly ONE recovery request. After that, the caller either saves the
+        // validated translation or marks the unit SOURCE_ONLY and continues.
+        StringBuilder prompt=new StringBuilder();
+        Map<String,String> marks=new LinkedHashMap<>();
+        String protectedSource=protectMarkup(u.inner,marks);
+        prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
+              .append("Do not omit, summarize, combine, reorder, or invent any sentence. ")
+              .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged. ")
+              .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
+              .append("Return ONLY the translated fragment. ")
+              .append("Translate every sentence in the source, including the first sentence.
+")
+              .append("Validation failure: ").append(reason).append("
 
+")
+              .append(protectedSource);
+
+        try{
             String raw=TranslationRouter.translate(prompt.toString(),context,providers);
-            try{
-                String restored=restoreMarkup(raw,marks);
-                t=clean(restored);
-                reason=validationReason(u,t);
-            }catch(IOException markupError){
-                t="";
-                reason="AI làm mất/thay đổi HTML/XML markup hoặc entity";
-            }
+            String restored=restoreMarkup(raw,marks);
+            t=clean(restored);
+            reason=validationReason(u,t);
+        }catch(Exception recoveryError){
+            if(isQuotaError(recoveryError)) throw quota(recoveryError);
+            throw new IOException("Dịch unit lỗi sau 1 lần recovery: "+safeMessage(recoveryError),recoveryError);
         }
-        if(reason!=null){
-            // Exactly ONE recovery request. Non-quota failures are logged by the
-            // caller and skipped; they can never abort the rest of the book.
-            StringBuilder prompt=new StringBuilder();
-            Map<String,String> marks=new LinkedHashMap<>();
-            String protectedSource=protectMarkup(u.inner,marks);
-            prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
-                  .append("Do not omit, summarize, combine, reorder, or invent any sentence. ")
-                  .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged. ")
-                  .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
-                  .append("Return ONLY the translated fragment.\n")
-                  .append("Validation failure: ").append(reason).append("\n\n")
-                  .append(protectedSource);
-            try{
-                String raw=TranslationRouter.translate(prompt.toString(),context,providers);
-                String restored=restoreMarkup(raw,marks);
-                t=clean(restored);
-                reason=validationReason(u,t);
-            }catch(Exception recoveryError){
-                if(isQuotaError(recoveryError)) throw quota(recoveryError);
-                throw new IOException("Dịch unit lỗi sau 1 lần recovery: "+safeMessage(recoveryError),recoveryError);
-            }
-            if(reason!=null)
-                throw new IOException("Bản dịch không đạt kiểm tra sau 1 recovery: "+reason);
-        }
+
+        if(reason!=null)
+            throw new IOException("Bản dịch không đạt kiểm tra sau 1 recovery: "+reason);
         return t;
     }
 
@@ -512,7 +511,13 @@ public final class TranslationJob {
             String protectedSource=protectMarkup(u.inner,marks);
             s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}\n");
         }
-        String response=TranslationRouter.translate(s.toString(),context,providers).trim();
+        String response;
+        try{
+            response=TranslationRouter.translate(s.toString(),context,providers).trim();
+        }catch(Exception e){
+            if(isQuotaError(e)) throw quota(e);
+            throw e;
+        }
         String fence=String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96);
         if(response.startsWith(fence))response=response.replaceFirst("^"+fence+"(?:json)?\\s*","").replaceFirst("\\s*"+fence+"$","");
         int a=response.indexOf('['),b=response.lastIndexOf(']');
