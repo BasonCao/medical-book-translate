@@ -122,9 +122,11 @@ public final class PdfTranslationJob {
                             logger.event("PAGE_OK","page="+pageNo+" elapsedMs="+(System.currentTimeMillis()-started));
                             return new PageResult(pageNo,normalized);
                         }catch(Exception e){
-                            logger.event("PAGE_SKIP","page="+pageNo+" elapsedMs="+(System.currentTimeMillis()-started)
+                            boolean quota=isQuotaError(e);
+                            logger.event(quota?"QUOTA_PAUSE":"PAGE_SKIP",
+                                    "page="+pageNo+" elapsedMs="+(System.currentTimeMillis()-started)
                                     +" reason="+safeLog(e.getMessage()));
-                            return new PageResult(pageNo,null);
+                            return new PageResult(pageNo,null,e,quota);
                         }finally{
                             TranslationLogger.unbind();
                         }
@@ -136,6 +138,16 @@ public final class PdfTranslationJob {
                     state.setProperty("pdf.layout.version","9");
                     for(int n=0;n<submitted;n++){
                         PageResult result=completion.take().get();
+                        if(result.quota){
+                            Exception reason=result.error==null
+                                    ?new IOException("AI provider hết quota/rate limit.")
+                                    :new IOException("AI provider hết quota/rate limit: "+safeLog(result.error.getMessage()),result.error);
+                            logger.event("QUOTA_PAUSE","page="+result.page+" reason="+safeLog(reason.getMessage()));
+                            File draft=new File(workspace,"translated-current.pdf");
+                            buildReflowPdf(context,source,draft,translations,singleColumn);
+                            listener.onPaused(draft,done,total,reason);
+                            return;
+                        }
                         if(result.text==null||result.text.trim().isEmpty()){
                             skipped++;
                             logger.event("PAGE_SKIPPED","page="+result.page+" reason=translation failed; source page retained");
@@ -1759,7 +1771,32 @@ public final class PdfTranslationJob {
     private static final class PageResult{
         final int page;
         final String text;
-        PageResult(int page,String text){this.page=page;this.text=text;}
+        final Exception error;
+        final boolean quota;
+        PageResult(int page,String text){this(page,text,null,false);}
+        PageResult(int page,String text,Exception error,boolean quota){
+            this.page=page;this.text=text;this.error=error;this.quota=quota;
+        }
+    }
+
+    private static boolean isQuotaError(Throwable e){
+        Throwable x=e;
+        while(x!=null){
+            String s=x.getMessage();
+            if(s!=null){
+                String low=s.toLowerCase(Locale.US);
+                if(low.contains("resource_exhausted")
+                        ||low.contains("quota exceeded")
+                        ||low.contains("quota/rate limit")
+                        ||low.contains("rate limit")
+                        ||low.contains("rate_limit")
+                        ||low.contains("too many requests")
+                        ||low.contains("http 429")
+                        ||low.contains("code 429")) return true;
+            }
+            x=x.getCause();
+        }
+        return false;
     }
 
     private static String safeLog(String s){
