@@ -177,7 +177,8 @@ public class MainActivity extends Activity {
                 }
                 boolean pdfSignature=headerRead>=5
                         && header[0]=='%' && header[1]=='P' && header[2]=='D' && header[3]=='F' && header[4]=='-';
-                boolean zipSignature=headerRead>=4                        && header[0]=='P' && header[1]=='K'
+                boolean zipSignature=headerRead>=4
+                        && header[0]=='P' && header[1]=='K'
                         && ((header[2]==3 && header[3]==4) || (header[2]==5 && header[3]==6) || (header[2]==7 && header[3]==8));
                 if(pdfSignature){
                     pdfMode=true;
@@ -356,7 +357,8 @@ public class MainActivity extends Activity {
                 String body=res.body()==null?"":res.body().string();
                 if(!res.isSuccessful())throw new IOException("Gemini models API HTTP "+res.code()+"\\n"+body);
                 JSONArray arr=new JSONObject(body).optJSONArray("models");
-                if(arr==null)throw new IOException("Gemini models API không trả về danh sách models.");                LinkedHashMap<String,String> found=new LinkedHashMap<>();
+                if(arr==null)throw new IOException("Gemini models API không trả về danh sách models.");
+                LinkedHashMap<String,String> found=new LinkedHashMap<>();
                 for(int i=0;i<arr.length();i++){
                     JSONObject m=arr.optJSONObject(i);if(m==null)continue;
                     String name=m.optString("name",""),id=name.startsWith("models/")?name.substring(7):name;
@@ -535,7 +537,8 @@ public class MainActivity extends Activity {
 
         final TextView note=new TextView(this);
         note.setTextSize(12);
-        note.setPadding(0,8,0,0);        root.addView(note);
+        note.setPadding(0,8,0,0);
+        root.addView(note);
 
         final TextView fallbackNote=new TextView(this);
         fallbackNote.setTextSize(12);
@@ -795,3 +798,146 @@ public class MainActivity extends Activity {
         }
         List<TranslationRouter.Provider> providers=fallbackProviders();
         if(providers.isEmpty()){settings();return;}
+        prefsHolder.edit().putInt("pdf_layout_mode",singleColumn?1:0).apply();
+        updatePdfLayoutButtons();
+        translatePdf(providers,singleColumn);
+    }
+
+
+    private void choosePdfLayoutAndTranslate(List<TranslationRouter.Provider> providers){
+        final int saved=prefsHolder.getInt("pdf_layout_mode",0);
+        final int[] selected={Math.max(0,Math.min(saved,1))};
+
+        // Use ordinary Buttons instead of RadioButton/RadioGroup. On some Android
+        // themes/devices the RadioButton children can collapse/not render inside
+        // a programmatically created AlertDialog. The two large buttons are always
+        // visible and also show the current selection explicitly.
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad=(int)(16*getResources().getDisplayMetrics().density);
+        root.setPadding(pad,0,pad,0);
+
+        TextView hint=new TextView(this);
+        hint.setText("Chọn bố cục PDF sau khi dịch:");
+        hint.setTextSize(16);
+        hint.setTextColor(0xFF555555);
+        hint.setPadding(0,pad/2,0,pad/2);
+        root.addView(hint,new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button keep=new Button(this);
+        Button one=new Button(this);
+        keep.setAllCaps(false);
+        one.setAllCaps(false);
+        keep.setTextSize(15);
+        one.setTextSize(15);
+        keep.setMinHeight((int)(52*getResources().getDisplayMetrics().density));
+        one.setMinHeight((int)(52*getResources().getDisplayMetrics().density));
+
+        LinearLayout.LayoutParams choiceLp=new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+        choiceLp.setMargins(0,0,0,pad/2);
+        root.addView(keep,choiceLp);
+        LinearLayout.LayoutParams choiceLp2=new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+        choiceLp2.setMargins(0,0,0,pad/4);
+        root.addView(one,choiceLp2);
+
+        TextView note=new TextView(this);
+        note.setText("2 cột: giữ bố cục, hình và bảng gần PDF gốc.\n"
+                +"1 cột: dồn văn bản thành một cột để đọc trên điện thoại; vị trí hình/bảng có thể thay đổi.");
+        note.setTextSize(13);
+        note.setTextColor(0xFF666666);
+        note.setPadding(0,pad/3,0,pad/2);
+        root.addView(note,new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Runnable refreshChoices=()->{
+            keep.setText((selected[0]==0?"✓ ":"") + "📰 Giữ nguyên bố cục PDF gốc (2 cột)");
+            one.setText((selected[0]==1?"✓ ":"") + "📄 Chuyển sang bố cục 1 cột");
+        };
+        refreshChoices.run();
+
+        keep.setOnClickListener(v->{selected[0]=0;refreshChoices.run();});
+        one.setOnClickListener(v->{selected[0]=1;refreshChoices.run();});
+
+        new AlertDialog.Builder(this)
+                .setTitle("Bố cục PDF đầu ra")
+                .setView(root)
+                .setPositiveButton("DỊCH / TIẾP TỤC",(d,w)->{
+                    prefsHolder.edit().putInt("pdf_layout_mode",selected[0]).apply();
+                    updatePdfLayoutButtons();
+                    translatePdf(providers,selected[0]==1);
+                })
+                .setNegativeButton("HỦY",null)
+                .show();
+    }
+    private void translatePdf(List<TranslationRouter.Provider> providers,boolean singleColumn){
+        File out=new File(workspace,"translated-final.pdf");
+        translating=true;translate.setEnabled(false);reset.setEnabled(false);export.setEnabled(false);
+        progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
+        report.setText("📄 Dịch PDF text layer. PDF scan/image-only không được hỗ trợ.");
+        PdfTranslationJob.run(this,selectedFile,out,workspace,providers,singleColumn,new PdfTranslationJob.Listener(){
+            public void onProgress(int d,int t,int page,String info){
+                int p=t<=0?0:(int)(100.0*d/t);
+                runOnUiThread(()->{progress.setProgress(p);status.setText("PDF: "+d+"/"+t+" trang | trang "+page);report.setText(info+"\n"+d+"/"+t+" trang");});
+            }
+            public void onDone(File f){
+                lastOutput=f;
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(true);progress.setProgress(100);report.setText("✅ Dịch PDF hoàn tất.\n"+f.getAbsolutePath()+"\n\nBố cục: "+(singleColumn?"1 cột":"2 cột như PDF gốc")+" . Hình ảnh/bảng được giữ theo chế độ đã chọn.");});
+            }
+            public void onPaused(File draft,int d,int t,Exception reason){
+                lastOutput=draft;
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(draft!=null&&draft.isFile());progress.setProgress(t<=0?0:(int)(100.0*d/t));showError(reason);});
+            }
+            public void onError(Exception e){
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);showError(e);});
+            }
+        });
+    }
+
+    private void resetProgress(){
+        if(workspace==null)return;
+        new AlertDialog.Builder(this).setTitle("Xóa tiến độ dịch?")
+                .setMessage("Chỉ xóa translation units và draft hiện tại. EPUB nguồn vẫn được giữ nguyên.")
+                .setPositiveButton("Xóa",(d,w)->{
+                    File units=new File(workspace,"units"),manifest=new File(workspace,"progress.json"),draftEpub=new File(workspace,"translated-current.epub"),finalEpub=new File(workspace,"translated-final.epub"),draftPdf=new File(workspace,"translated-current.pdf"),finalPdf=new File(workspace,"translated-final.pdf"),pdfState=new File(workspace,"pdf-progress.properties");
+                    deleteTree(units);manifest.delete();draftEpub.delete();finalEpub.delete();draftPdf.delete();finalPdf.delete();pdfState.delete();lastOutput=null;export.setEnabled(false);
+                    report.setText("Đã xóa tiến độ. EPUB nguồn vẫn còn, có thể dịch lại từ đầu.");
+                }).setNegativeButton("Hủy",null).show();
+    }
+
+    private void deleteTree(File f){
+        if(f==null||!f.exists())return;
+        if(f.isDirectory()){File[] a=f.listFiles();if(a!=null)for(File x:a)deleteTree(x);}
+        f.delete();
+    }
+
+    private void exportTranslationLog(){
+        if(workspace==null){Toast.makeText(this,"Chưa có workspace dịch.",Toast.LENGTH_SHORT).show();return;}
+        File log=new File(workspace,"translation-debug.log");
+        if(!log.isFile()){Toast.makeText(this,"Chưa có log. Hãy chạy Dịch / Tiếp tục trước.",Toast.LENGTH_SHORT).show();return;}
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.setType("text/plain");
+        i.putExtra(Intent.EXTRA_TITLE,"translation-debug.log");
+        startActivityForResult(i,13);
+    }
+
+    private void saveOutput(){
+        if(lastOutput==null||!lastOutput.isFile()){Toast.makeText(this,pdfMode?"Chưa có PDF draft.":"Chưa có EPUB draft.",Toast.LENGTH_SHORT).show();return;}
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.setType(pdfMode?"application/pdf":"application/epub+zip");
+        i.putExtra(Intent.EXTRA_TITLE,lastOutput.getName());
+        startActivityForResult(i,11);
+    }
+
+    private void openUrl(String url){try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception e){showError(e);}}
+    private static void copyFile(File s,File t)throws IOException{
+        File p=t.getParentFile();if(p!=null&&!p.exists())p.mkdirs();
+        try(InputStream in=new FileInputStream(s);OutputStream out=new FileOutputStream(t)){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);}
+    }
+    private void showError(Exception e){
+        progress.setVisibility(View.GONE);
+        new AlertDialog.Builder(this).setTitle("Lỗi").setMessage(e.getMessage()==null?e.toString():e.getMessage()).setPositiveButton("OK",null).show();
+    }
+}
