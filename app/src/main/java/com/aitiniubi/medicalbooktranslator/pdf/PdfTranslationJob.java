@@ -1209,7 +1209,11 @@ public final class PdfTranslationJob {
 
         List<LayoutLine> buildLines(float pageWidth,List<TableRegion> tables){
             List<LayoutLine> out=new ArrayList<>();
-            Set<Float> textTableDividers=inferTableDividerXs(pageWidth);
+            // Do not infer vertical dividers from ordinary text gaps here.
+            // Justified journal prose frequently contains repeated large word
+            // gaps; treating those as table dividers fragments every paragraph
+            // into narrow blocks. Real vector tables are handled separately by
+            // collectTableRegions()/buildTableCellUnits().
             List<TextPosition> sorted=new ArrayList<>(glyphs);
             Collections.sort(sorted,(a,b)->{
                 int y=Float.compare(a.getY(),b.getY());
@@ -1260,16 +1264,6 @@ public final class PdfTranslationJob {
                                 if(crossesVerticalGuide)break;
                             }
                         }
-                        if(!crossesVerticalGuide){
-                            for(Float g:textTableDividers){
-                                if(g!=null&&g>pieceLeft+0.5f&&g<p.getX()-0.5f
-                                        &&Math.abs(g-(prev.getX()+prev.getWidth()))>0.5f){
-                                    crossesVerticalGuide=true;
-                                    break;
-                                }
-                            }
-                        }
-
                         float threshold=Math.max(24f,prev.getFontSizeInPt()*3.5f);
                         if((gap>threshold||crossesTwoColumns||crossesVerticalGuide)&&!piece.isEmpty()){
                             addLine(out,piece);
