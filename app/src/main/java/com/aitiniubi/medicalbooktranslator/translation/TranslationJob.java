@@ -301,9 +301,7 @@ public final class TranslationJob {
               .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
               .append("Return ONLY the translated fragment. ")
               .append("Translate every sentence in the source, including the first sentence.\n")
-              .append("Validation failure: ").append(reason).append("
-
-")
+              .append("Validation failure: ").append(reason).append("\n\n")
               .append(protectedSource);
 
         try{
