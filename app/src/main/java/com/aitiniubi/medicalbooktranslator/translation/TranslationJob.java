@@ -281,9 +281,9 @@ public final class TranslationJob {
               .append("Return ONLY a JSON array of strings, in exactly the same order and count. ")
               .append("Do not omit, merge, summarize, or reorder any sentence. ")
               .append("Preserve numbers, ranges, abbreviations, gene names, units and citation markers. ")
-              .append("This is a recovery pass because the previous translation omitted sentence(s).\\n");
+              .append("This is a recovery pass because the previous translation omitted sentence(s).\n");
         for(int i=0;i<sentences.size();i++){
-            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\\n");
+            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\n");
         }
 
         String response=TranslationRouter.translate(prompt.toString(),context,providers).trim();
@@ -458,7 +458,7 @@ public final class TranslationJob {
         return out;
     }
 
-    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r");}
+    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\n").replace("\r","\r");}
     private static String strip(String s){return s.replaceAll("<[^>]+>"," ").replaceAll("&[a-zA-Z#0-9]+;"," ").replaceAll("\\s+"," ").trim();}
     private static boolean blank(String s){return s==null||s.trim().isEmpty();}
     private static String read(ZipFile z,ZipEntry e)throws Exception{try(InputStream in=z.getInputStream(e);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString(StandardCharsets.UTF_8.name());}}
@@ -522,7 +522,7 @@ public final class TranslationJob {
         int a=t.indexOf("<"),b=t.lastIndexOf(">");
         return a>0&&b>a?t.substring(a,b+1).trim():t;
     }
-    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r");}
+    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\n").replace("\r","\r");}
     private static String strip(String s){return s.replaceAll("<[^>]+>"," ").replaceAll("&[a-zA-Z#0-9]+;"," ").replaceAll("\\\\s+"," ").trim();}
     private static boolean blank(String s){return s==null||s.trim().isEmpty();}
     private static String read(ZipFile z,ZipEntry e)throws Exception{try(InputStream in=z.getInputStream(e);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString(StandardCharsets.UTF_8.name());}}
