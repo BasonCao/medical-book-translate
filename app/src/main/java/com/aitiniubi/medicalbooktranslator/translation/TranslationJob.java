@@ -156,7 +156,7 @@ public final class TranslationJob {
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
-            }catch(Exception e){logger.error("JOB_ERROR",e);listener.onError(e);}finally{TranslationLogger.unbind();}
+            }catch(Exception e){listener.onError(e);}finally{TranslationLogger.unbind();}
         },"epub-translation").start();
     }
 
