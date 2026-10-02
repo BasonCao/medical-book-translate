@@ -1,6 +1,7 @@
 package com.aitiniubi.medicalbooktranslator.translation;
 
 import java.io.IOException;
+import android.content.Context;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,10 +29,12 @@ public final class TranslationRouter {
     private static final Map<String,Long> DISABLED_UNTIL = new ConcurrentHashMap<>();
     private static final ThreadLocal<TranslationLogger> ACTIVE_LOGGER = new ThreadLocal<>();
     private static final ThreadLocal<String> ACTIVE_STAGE = new ThreadLocal<>();
+    private static volatile Context OFFLINE_CONTEXT;
 
     public static void setDiagnostics(TranslationLogger logger, String stage) { ACTIVE_LOGGER.set(logger); ACTIVE_STAGE.set(stage); }
     public static void setStage(String stage) { ACTIVE_STAGE.set(stage); }
     public static void clearDiagnostics() { ACTIVE_LOGGER.remove(); ACTIVE_STAGE.remove(); }
+    public static void setOfflineContext(Context context) { OFFLINE_CONTEXT=context==null?null:context.getApplicationContext(); }
     private static final long DAILY_QUOTA_COOLDOWN_MS = 24L * 60L * 60L * 1000L;
     private static final long RATE_LIMIT_COOLDOWN_MS = 60L * 1000L;
     private static final long TEMPORARY_QUOTA_COOLDOWN_MS = 60L * 1000L;
@@ -48,7 +51,8 @@ public final class TranslationRouter {
         List<String> failures = new ArrayList<>();
         boolean sawQuotaDisabledProvider = false;
         for (Provider p : providers) {
-            if (p == null || p.config == null || isBlank(p.config.endpoint) || isBlank(p.config.model) || isBlank(p.config.apiKey)) {
+            if (p == null || p.config == null || isBlank(p.config.endpoint) || isBlank(p.config.model)
+                    || (!OfflineNllbTranslator.ENDPOINT.equals(p.config.endpoint) && isBlank(p.config.apiKey))) {
                 continue;
             }
             long now = System.currentTimeMillis();
