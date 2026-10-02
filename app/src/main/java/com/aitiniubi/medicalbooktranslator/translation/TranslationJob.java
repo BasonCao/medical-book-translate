@@ -31,6 +31,47 @@ public final class TranslationJob {
 
     private TranslationJob(){}
 
+    private static final class QuotaPauseException extends IOException {
+        QuotaPauseException(String message){ super(message); }
+    }
+
+    private static boolean isQuotaError(Throwable e){
+        Throwable x=e;
+        while(x!=null){
+            String s=x.getMessage();
+            if(s!=null){
+                String low=s.toLowerCase(Locale.US);
+                if(low.contains("resource_exhausted")
+                        ||low.contains("quota exceeded")
+                        ||low.contains("quota/rate limit")
+                        ||low.contains("rate limit")
+                        ||low.contains("rate_limit")
+                        ||low.contains("too many requests")
+                        ||low.contains("http 429")
+                        ||low.contains("code 429")) return true;
+            }
+            x=x.getCause();
+        }
+        return false;
+    }
+
+    private static String safeMessage(Throwable e){
+        String s=e==null?null:e.getMessage();
+        if(s==null||s.trim().isEmpty())return e==null?"unknown error":e.getClass().getSimpleName();
+        return s.replace('\n',' ').replace('\r',' ');
+    }
+
+    private static void logUnitFailure(TranslationLogger logger,Unit u,Exception e){
+        if(logger!=null){
+            logger.event("UNIT_SKIP","id="+shortId(u.id)+" file="+u.file+" ordinal="+u.ordinal
+                    +" reason="+safeMessage(e));
+        }
+    }
+
+    private static String shortId(String id){
+        return id==null?"unknown":id.substring(0,Math.min(12,id.length()));
+    }
+
     public static void run(File source,File output,File workspace,
                            List<TranslationRouter.Provider> providers,Listener listener){
         new Thread(()->{
@@ -85,12 +126,28 @@ public final class TranslationJob {
                         try{
                             br=completion.take().get();
                         }catch(Exception batchError){
-                            // A failed batch must not abort the entire book. Recover
-                            // each unit independently below; failed units remain source-only.
                             completedBatches++;
+                            if(isQuotaError(batchError)){
+                                Exception reason=new QuotaPauseException("AI provider hết quota/rate limit: "+safeMessage(batchError));
+                                logger.event("QUOTA_PAUSE","reason="+safeMessage(reason));
+                                store.saveManifest(sourceHash,source.getName(),total,done);
+                                File draft=new File(workspace,"translated-current.epub");
+                                rebuild(source,draft,units,doneMap);
+                                listener.onPaused(draft,done,total,reason);
+                                return;
+                            }
+                            logger.event("BATCH_FAIL","batch="+completedBatches+" reason="+safeMessage(batchError));
                             continue;
                         }
                         completedBatches++;
+                        if(br.quota){
+                            logger.event("QUOTA_PAUSE","reason="+safeMessage(new IOException(br.failureReason)));
+                            store.saveManifest(sourceHash,source.getName(),total,done);
+                            File draft=new File(workspace,"translated-current.epub");
+                            rebuild(source,draft,units,doneMap);
+                            listener.onPaused(draft,done,total,new QuotaPauseException(br.failureReason));
+                            return;
+                        }
                         Map<String,String> got=br.translations;
                         List<Unit> batch=br.batch;
                         int batchNo=completedBatches;
@@ -102,18 +159,23 @@ public final class TranslationJob {
                                 doneMap.put(u.id,t);done++;
                                 listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
                             }catch(Exception unitError){
-                                // Never stop the whole EPUB because one short heading,
-                                // caption, or transient AI response failed. Do NOT store an
-                                // empty translation. rebuild() will keep the original source
-                                // HTML for this unit, so no source content can be lost.
+                                if(isQuotaError(unitError)){
+                                    Exception reason=new QuotaPauseException("AI provider hết quota/rate limit: "+safeMessage(unitError));
+                                    logger.event("QUOTA_PAUSE","unit="+shortId(u.id)+" reason="+safeMessage(reason));
+                                    store.saveManifest(sourceHash,source.getName(),total,done);
+                                    File draft=new File(workspace,"translated-current.epub");
+                                    rebuild(source,draft,units,doneMap);
+                                    listener.onPaused(draft,done,total,reason);
+                                    return;
+                                }
                                 try{
                                     store.put(new TranslationStateStore.Record(
-                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",3));
+                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",1));
                                 }catch(Exception ignored){}
+                                logUnitFailure(logger,u,unitError);
                                 listener.onProgress(done,total,batchNo,
-                                        "SOURCE_ONLY unit "+u.id.substring(0,Math.min(12,u.id.length()))
-                                        +" — giữ nguyên nguồn; sẽ retry ở lần Tiếp tục. "
-                                        +unitError.getMessage());
+                                        "SOURCE_ONLY unit "+shortId(u.id)
+                                        +" — lỗi đã ghi log; tiếp tục unit khác.");
                             }
                         }
                         store.saveManifest(sourceHash,source.getName(),total,done);
@@ -214,10 +276,13 @@ public final class TranslationJob {
             try{
                 String direct=translateDirect(u,context,providers);
                 if(validationReason(u,direct)==null)return direct;
-            }catch(Exception ignored){}
+            }catch(Exception directError){
+                if(isQuotaError(directError)) throw quota(directError);
+            }
         }
         String reason=validationReason(u,t);
-        for(int attempt=0;attempt<3;attempt++){
+        if(reason==null)return t;
+        {
             if(reason==null)return t;
 
             StringBuilder prompt=new StringBuilder();
@@ -244,23 +309,29 @@ public final class TranslationJob {
             }
         }
         if(reason!=null){
-            // Final fallback: translate each source sentence independently.
-            // This prevents a model from silently dropping one or more sentences
-            // after the normal whole-unit retries.
-            String fallback=translateBySentences(u,context,providers);
-            String fallbackReason=validationReason(u,fallback);
-            if(fallbackReason==null)return fallback;
-
-            // Last recovery path: a very small, plain prompt. This is important
-            // for short headings/captions and for models that occasionally return
-            // an empty batch item even though the API request itself succeeded.
-            String direct=translateDirect(u,context,providers);
-            String directReason=validationReason(u,direct);
-            if(directReason==null)return direct;
-
-            throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
-                    +" sau recovery: "+directReason
-                    +". App đã dừng để tránh xuất EPUB thiếu nội dung.");
+            // Exactly ONE recovery request. Non-quota failures are logged by the
+            // caller and skipped; they can never abort the rest of the book.
+            StringBuilder prompt=new StringBuilder();
+            Map<String,String> marks=new LinkedHashMap<>();
+            String protectedSource=protectMarkup(u.inner,marks);
+            prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
+                  .append("Do not omit, summarize, combine, reorder, or invent any sentence. ")
+                  .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged. ")
+                  .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
+                  .append("Return ONLY the translated fragment.\n")
+                  .append("Validation failure: ").append(reason).append("\n\n")
+                  .append(protectedSource);
+            try{
+                String raw=TranslationRouter.translate(prompt.toString(),context,providers);
+                String restored=restoreMarkup(raw,marks);
+                t=clean(restored);
+                reason=validationReason(u,t);
+            }catch(Exception recoveryError){
+                if(isQuotaError(recoveryError)) throw quota(recoveryError);
+                throw new IOException("Dịch unit lỗi sau 1 lần recovery: "+safeMessage(recoveryError),recoveryError);
+            }
+            if(reason!=null)
+                throw new IOException("Bản dịch không đạt kiểm tra sau 1 recovery: "+reason);
         }
         return t;
     }
@@ -409,11 +480,12 @@ public final class TranslationJob {
         try{
             return translateOneBatch(batch,providers,glossary);
         }catch(Exception e){
-            // Keep the batch alive so each unit gets its own recovery attempt.
-            // An empty map means no translation is trusted; the original EPUB
-            // source is retained for every unit that still fails.
+            if(isQuotaError(e)){
+                return new BatchResult(batch,new HashMap<>(),
+                        "AI provider hết quota/rate limit: "+safeMessage(e),true);
+            }
             return new BatchResult(batch,new HashMap<>(),
-                    "Batch failed; recovering units independently. "+e.getMessage());
+                    "Batch failed; units will be logged and skipped: "+safeMessage(e),false);
         }
     }
 
@@ -534,5 +606,11 @@ public final class TranslationJob {
     private static final class Rep{final Unit u;final String t;Rep(Unit u,String t){this.u=u;this.t=t;}}
     private static final class BatchResult{
         final List<Unit> batch;final Map<String,String> translations;final String context;
-        BatchResult(List<Unit> b,Map<String,String> t,String c){batch=b;translations=t;context=c;}
+        final boolean quota;
+        final String failureReason;
+        BatchResult(List<Unit> b,Map<String,String> t,String c){this(b,t,c,false,"");}
+        BatchResult(List<Unit> b,Map<String,String> t,String c,boolean q){this(b,t,c,q,c);}
+        BatchResult(List<Unit> b,Map<String,String> t,String c,boolean q,String r){
+            batch=b;translations=t;context=c;quota=q;failureReason=r==null?"":r;
+        }
     }}
