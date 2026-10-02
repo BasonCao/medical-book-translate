@@ -34,7 +34,7 @@ public final class TranslationRouter {
     public static void clearDiagnostics() { ACTIVE_LOGGER.remove(); ACTIVE_STAGE.remove(); }
     private static final long DAILY_QUOTA_COOLDOWN_MS = 24L * 60L * 60L * 1000L;
     private static final long RATE_LIMIT_COOLDOWN_MS = 60L * 1000L;
-    private static final long TEMPORARY_QUOTA_COOLDOWN_MS = 15L * 60L * 1000L;
+    private static final long TEMPORARY_QUOTA_COOLDOWN_MS = 60L * 1000L;
 
     private TranslationRouter() {}
 
@@ -76,7 +76,7 @@ public final class TranslationRouter {
                 if (isQuotaOrRateLimit(message)) {
                     long cooldown = isDailyQuota(message)
                             ? DAILY_QUOTA_COOLDOWN_MS
-                            : (isTemporaryQuota(message) ? TEMPORARY_QUOTA_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS);
+                            : (isTemporaryQuota(message) ? extractRetryDelayMs(message) : RATE_LIMIT_COOLDOWN_MS);
                     DISABLED_UNTIL.put(p.name, System.currentTimeMillis() + cooldown);
                     if (logger != null) {
                         logger.event(stage, "QUOTA_DETECTED name=" + p.name
@@ -128,6 +128,22 @@ public final class TranslationRouter {
                 || s.contains("free model requests per day")
                 || s.contains("requests per day")
                 || s.contains("add 10 credits");
+    }
+
+    private static long extractRetryDelayMs(String message) {
+        if (message != null) {
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("(?i)(?:retry in|retry-after)\\s*[:=]?\\s*([0-9]+(?:\\.[0-9]+)?)\\s*s")
+                    .matcher(message);
+            if (m.find()) {
+                try {
+                    double seconds = Double.parseDouble(m.group(1));
+                    long millis = (long)(seconds * 1000L) + 1000L;
+                    return Math.max(5000L, Math.min(millis, 120000L));
+                } catch (Exception ignored) {}
+            }
+        }
+        return TEMPORARY_QUOTA_COOLDOWN_MS;
     }
 
     private static boolean isTemporaryQuota(String message) {
