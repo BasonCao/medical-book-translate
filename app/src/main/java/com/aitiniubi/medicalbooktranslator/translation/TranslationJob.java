@@ -108,11 +108,14 @@ public final class TranslationJob {
                                 // HTML for this unit, so no source content can be lost.
                                 try{
                                     store.put(new TranslationStateStore.Record(
-                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",3));
+                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",1));
                                 }catch(Exception ignored){}
+                                logger.event("UNIT_SKIP",
+                                        "unit="+u.id.substring(0,Math.min(12,u.id.length()))
+                                        +" file="+u.file+" reason="+safeLog(unitError.getMessage()));
                                 listener.onProgress(done,total,batchNo,
                                         "SOURCE_ONLY unit "+u.id.substring(0,Math.min(12,u.id.length()))
-                                        +" — giữ nguyên nguồn; sẽ retry ở lần Tiếp tục. "
+                                        +" — bỏ qua, ghi log; sẽ retry ở lần Tiếp tục. "
                                         +unitError.getMessage());
                             }
                         }
