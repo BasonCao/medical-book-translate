@@ -888,7 +888,14 @@ public class MainActivity extends Activity {
             }
             public void onPaused(File draft,int d,int t,Exception reason){
                 lastOutput=draft;
-                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(draft!=null&&draft.isFile());progress.setProgress(t<=0?0:(int)(100.0*d/t));showError(reason);});
+                runOnUiThread(()->{
+                    translating=false;translate.setEnabled(true);reset.setEnabled(true);
+                    export.setEnabled(draft!=null&&draft.isFile());
+                    progress.setProgress(t<=0?0:(int)(100.0*d/t));
+                    String msg=reason.getMessage()==null?reason.toString():reason.getMessage();
+                    report.setText("⏸ PAUSED — đã lưu "+d+"/"+t+" trang.\n\n"+msg
+                            +"\n\nKhông mất phần đã dịch. Bấm Dịch / Tiếp tục khi quota hồi phục hoặc sau khi đổi provider.");
+                });
             }
             public void onError(Exception e){
                 runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);showError(e);});
