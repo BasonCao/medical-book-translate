@@ -95,6 +95,8 @@ public final class PdfTranslationJob {
                         java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<PageResult> completion=
                         new java.util.concurrent.ExecutorCompletionService<>(pool);
+                final java.util.concurrent.atomic.AtomicBoolean quotaSignal=
+                        new java.util.concurrent.atomic.AtomicBoolean(false);
                 int submitted=0;
                 for(int page=1;page<=total;page++){
                     final int pageNo=page;
@@ -104,6 +106,12 @@ public final class PdfTranslationJob {
                         TranslationLogger.bind(logger);
                         long started=System.currentTimeMillis();
                         try{
+                            if(quotaSignal.get()){
+                                return new PageResult(pageNo,null,
+                                        new IOException("AI provider hết quota/rate limit; trang chưa gửi request."),
+                                        true);
+                            }
+                            TranslationRouter.setDiagnostics(logger,"PDF");
                             logger.event("PAGE_START","page="+pageNo+" units="+units.size());
                             StringBuilder prompt=new StringBuilder();
                             prompt.append("Translate the following medical textbook page from English to professional Vietnamese.\\n")
@@ -123,11 +131,13 @@ public final class PdfTranslationJob {
                             return new PageResult(pageNo,normalized);
                         }catch(Exception e){
                             boolean quota=isQuotaError(e);
+                            if(quota)quotaSignal.set(true);
                             logger.event(quota?"QUOTA_PAUSE":"PAGE_SKIP",
                                     "page="+pageNo+" elapsedMs="+(System.currentTimeMillis()-started)
                                     +" reason="+safeLog(e.getMessage()));
                             return new PageResult(pageNo,null,e,quota);
                         }finally{
+                            TranslationRouter.clearDiagnostics();
                             TranslationLogger.unbind();
                         }
                     });
