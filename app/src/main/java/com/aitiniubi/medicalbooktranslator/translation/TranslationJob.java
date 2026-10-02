@@ -72,13 +72,6 @@ public final class TranslationJob {
         }
     }
 
-    private static void loggerSafeTopLevelPause(File workspace,File source,File output,Exception reason){
-        try{
-            TranslationLogger logger=new TranslationLogger(workspace);
-            logger.event("QUOTA_PAUSE","top-level reason="+safeMessage(reason)+" source="+(source==null?"":source.getName()));
-        }catch(Exception ignored){}
-    }
-
     private static String shortId(String id){
         return id==null?"unknown":id.substring(0,Math.min(12,id.length()));
     }
@@ -208,17 +201,7 @@ public final class TranslationJob {
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
-            }catch(Exception e){
-                if(isQuotaError(e)){
-                    Exception reason = e instanceof QuotaPauseException ? e : quota(e);
-                    try{
-                        loggerSafeTopLevelPause(workspace, source, output, reason);
-                    }catch(Exception ignored){}
-                    listener.onPaused(new File(workspace,"translated-current.epub"),0,total,reason);
-                }else{
-                    listener.onError(e);
-                }
-            }
+            }catch(Exception e){listener.onError(e);}
         },"epub-translation").start();
     }
 
@@ -317,8 +300,7 @@ public final class TranslationJob {
               .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged. ")
               .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
               .append("Return ONLY the translated fragment. ")
-              .append("Translate every sentence in the source, including the first sentence.
-")
+              .append("Translate every sentence in the source, including the first sentence.\n")
               .append("Validation failure: ").append(reason).append("
 
 ")
