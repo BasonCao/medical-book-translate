@@ -675,13 +675,13 @@ public final class PdfTranslationJob {
         if(clean.isEmpty())return;
         float maxWidth=Math.max(10f,unit.width);
         float maxHeight=Math.max(10f,unit.height);
-        float size=Math.max(5.5f,Math.min(18f,unit.fontSize));
+        float size=Math.max(4.5f,Math.min(18f,unit.fontSize));
         List<String> lines;
         while(true){
             lines=wrapText(clean,fonts,size,maxWidth);
             float leading=size*1.16f;
-            if(lines.size()*leading<=maxHeight || size<=5.5f)break;
-            size=Math.max(5.5f,size-0.45f);
+            if(lines.size()*leading<=maxHeight || size<=4.5f)break;
+            size=Math.max(4.5f,size-0.35f);
         }
         float leading=size*1.16f;
         float yTop=unit.y;
@@ -1147,7 +1147,7 @@ public final class PdfTranslationJob {
                 // A table divider means a new cell or a new table row. Elsewhere
                 // keep the paragraph-merging behavior used for normal prose.
                 float xShift=current==null?0f:Math.abs(line.x-current.x);
-                boolean distinctVisualBlock=current!=null && xShift>24f;
+                boolean distinctVisualBlock=current!=null && xShift>60f;
 
                 boolean newUnit=current==null || verticalGap>8f || guideBetween
                         || rowBetween || distinctVisualBlock;
