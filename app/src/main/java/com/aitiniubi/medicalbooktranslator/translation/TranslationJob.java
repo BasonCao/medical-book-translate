@@ -46,6 +46,7 @@ public final class TranslationJob {
                 store.initialize(sourceHash,source.getName(),total);
                 TranslationLogger logger=new TranslationLogger(workspace);
                 TranslationLogger.bind(logger);
+                TranslationRouter.setDiagnostics(logger,"JOB");
                 logger.start(source.getName(), sourceHash, total);
                 logger.event("QUEUE", "translatable=" + total);
 
@@ -93,27 +94,6 @@ public final class TranslationJob {
                         Map<String,String> got=br.translations;
                         List<Unit> batch=br.batch;
                         int batchNo=completedBatches;
-                        // A provider quota/rate-limit failure is a batch-level failure.
-                        // Do NOT launch one recovery request per unit: that only burns
-                        // more quota and makes the book appear to hang.
-                        if(br.failureReason!=null && isProviderUnavailable(br.failureReason)){
-                            for(Unit u:batch){
-                                try{
-                                    store.put(new TranslationStateStore.Record(
-                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",1));
-                                }catch(Exception ignored){}
-                                logger.event("UNIT_SKIP","unit="+shortId(u.id)+" file="+u.file
-                                        +" reason=provider unavailable: "+safeLog(br.failureReason));
-                            }
-                            logger.event("BATCH_SKIP","batch="+batchNo+" units="+batch.size()
-                                    +" reason=provider unavailable; no per-unit retry");
-                            store.saveManifest(sourceHash,source.getName(),total,done);
-                            if(next<pending.size()){
-                                List<Unit> nextBatch=makeBatch(pending,next);next+=nextBatch.size();submitted++;
-                                completion.submit(()->translateOneBatchSafe(nextBatch,providers,glossary));
-                            }
-                            continue;
-                        }
                         for(Unit u:batch){
                             String t=got.get(u.id);
                             try{
@@ -128,13 +108,11 @@ public final class TranslationJob {
                                 // HTML for this unit, so no source content can be lost.
                                 try{
                                     store.put(new TranslationStateStore.Record(
-                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",1));
+                                            u.id,u.file,u.sourceHash,"","SOURCE_ONLY",3));
                                 }catch(Exception ignored){}
-                                logger.event("UNIT_SKIP","unit="+shortId(u.id)+" file="+u.file
-                                        +" reason="+safeLog(unitError.getMessage()));
                                 listener.onProgress(done,total,batchNo,
                                         "SOURCE_ONLY unit "+u.id.substring(0,Math.min(12,u.id.length()))
-                                        +" — bỏ qua, ghi log; sẽ retry ở lần Tiếp tục. "
+                                        +" — giữ nguyên nguồn; sẽ retry ở lần Tiếp tục. "
                                         +unitError.getMessage());
                             }
                         }
@@ -156,7 +134,7 @@ public final class TranslationJob {
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
-            }catch(Exception e){listener.onError(e);}finally{TranslationLogger.unbind();}
+            }catch(Exception e){listener.onError(e);}
         },"epub-translation").start();
     }
 
@@ -199,8 +177,7 @@ public final class TranslationJob {
         if(plain.length()<2||!plain.matches("(?s).*\\p{L}.*"))return false;
         String a=attrs==null?"":attrs.toLowerCase(Locale.US);
         if(a.matches(".*\\b(ref|ref1|reflist|references|bibliography|bib|doi|url|tsource|tsource1|figcredit|fignum)\\b.*"))return false;
-        String compact=plain.replaceAll("[^A-Za-z0-9-]","");
-        String lower=plain.trim().toLowerCase(Locale.US);
+        String compact=plain.replaceAll("[^A-Za-z0-9-]","");        String lower=plain.trim().toLowerCase(Locale.US);
         boolean shortHeading=lower.equals("definition")
                 ||lower.equals("feature")
                 ||lower.equals("renal")
@@ -224,30 +201,68 @@ public final class TranslationJob {
         Matcher m=Pattern.compile("[À-ỹĐđ]{2,}").matcher(s);int n=0;while(m.find())n++;return n;
     }
 
-    /**
-     * Fast validation policy:
-     * - Trust a valid batch result.
-     * - If invalid, make ONE direct recovery request.
-     * - If still invalid, skip the unit and continue.
-     * No 3x retry + sentence-by-sentence + final direct cascade.
-     */
     private static String translateValidatedUnit(Unit u,String candidate,
                                                      String context,
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
         String t=clean(candidate);
+        String sourcePlain=strip(u.inner);
+        // Short headings/captions are much safer with a dedicated single-unit
+        // request than inside a JSON batch. This also fixes cases such as
+        // "Seizure", "Renal", and similar 1–3 word headings.
+        if(sourcePlain.length()<=80){
+            try{
+                String direct=translateDirect(u,context,providers);
+                if(validationReason(u,direct)==null)return direct;
+            }catch(Exception ignored){}
+        }
         String reason=validationReason(u,t);
-        if(reason==null)return t;
+        for(int attempt=0;attempt<3;attempt++){
+            if(reason==null)return t;
 
-        try{
+            StringBuilder prompt=new StringBuilder();
+            Map<String,String> marks=new LinkedHashMap<>();
+            String protectedSource=protectMarkup(u.inner,marks);
+            prompt.append("Translate this ENTIRE medical-text unit into professional Vietnamese. ")
+                  .append("Do not omit, summarize, combine away, or invent any sentence. ")
+                  .append("Keep every placeholder such as __MBT_MARKUP_000__ EXACTLY unchanged and in the same relative position; placeholders represent HTML/XML tags or entities and must never be translated or deleted. ")
+                  .append("Preserve every number, percentage, range, gene name, abbreviation, citation marker and unit. ")
+                  .append("Return ONLY the translated fragment. ")
+                  .append("If the source contains multiple sentences, translate all of them.\n")
+                  .append("The previous output failed validation for this reason: ").append(reason).append("\n")
+                  .append("Correct that problem in the new output.\n\n")
+                  .append(protectedSource);
+
+            String raw=TranslationRouter.translate(prompt.toString(),context,providers);
+            try{
+                String restored=restoreMarkup(raw,marks);
+                t=clean(restored);
+                reason=validationReason(u,t);
+            }catch(IOException markupError){
+                t="";
+                reason="AI làm mất/thay đổi HTML/XML markup hoặc entity";
+            }
+        }
+        if(reason!=null){
+            // Final fallback: translate each source sentence independently.
+            // This prevents a model from silently dropping one or more sentences
+            // after the normal whole-unit retries.
+            String fallback=translateBySentences(u,context,providers);
+            String fallbackReason=validationReason(u,fallback);
+            if(fallbackReason==null)return fallback;
+
+            // Last recovery path: a very small, plain prompt. This is important
+            // for short headings/captions and for models that occasionally return
+            // an empty batch item even though the API request itself succeeded.
             String direct=translateDirect(u,context,providers);
             String directReason=validationReason(u,direct);
             if(directReason==null)return direct;
-            throw new IOException(directReason);
-        }catch(Exception e){
-            throw new IOException("validation failed: "+reason+"; direct recovery failed: "
-                    +safeLog(e.getMessage()),e);
+
+            throw new IOException("Bản dịch không đạt kiểm tra đầy đủ cho unit "+u.id
+                    +" sau recovery: "+directReason
+                    +". App đã dừng để tránh xuất EPUB thiếu nội dung.");
         }
+        return t;
     }
 
     private static boolean looksComplete(Unit u,String translation){
@@ -281,9 +296,9 @@ public final class TranslationJob {
               .append("Return ONLY a JSON array of strings, in exactly the same order and count. ")
               .append("Do not omit, merge, summarize, or reorder any sentence. ")
               .append("Preserve numbers, ranges, abbreviations, gene names, units and citation markers. ")
-              .append("This is a recovery pass because the previous translation omitted sentence(s).\n");
+              .append("This is a recovery pass because the previous translation omitted sentence(s).\\n");
         for(int i=0;i<sentences.size();i++){
-            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\n");
+            prompt.append(i+1).append(". ").append(sentences.get(i)).append("\\n");
         }
 
         String response=TranslationRouter.translate(prompt.toString(),context,providers).trim();
@@ -305,7 +320,7 @@ public final class TranslationJob {
     private static List<String> splitSentences(String s){
         List<String> out=new ArrayList<>();
         if(s==null)return out;
-        Matcher m=Pattern.compile(".*?(?:[.!?](?=\s|$)|$)",Pattern.DOTALL).matcher(s.trim());
+        Matcher m=Pattern.compile(".*?(?:[.!?](?=\\s|$)|$)",Pattern.DOTALL).matcher(s.trim());
         while(m.find()){
             String x=m.group().trim();
             if(!x.isEmpty())out.add(x);
@@ -341,8 +356,7 @@ public final class TranslationJob {
             for(Map.Entry<String,Integer> e:need.entrySet()){
                 total+=e.getValue();
                 covered+=Math.min(e.getValue(),have.getOrDefault(e.getKey(),0));
-            }
-            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))
+            }            if(total>0 && covered < Math.max(1,(int)Math.ceil(total*0.75)))
                 return "thiếu số liệu/citation quan trọng ("+covered+"/"+total+" token được giữ lại)";
         }
 
@@ -362,26 +376,9 @@ public final class TranslationJob {
         return null;
     }
 
-    private static boolean isProviderUnavailable(String message){
-        if(message==null)return false;
-        String s=message.toLowerCase(Locale.US);
-        return s.contains("http 429")||s.contains("quota")||s.contains("rate limit")
-                ||s.contains("resource_exhausted")||s.contains("all ai provider");
-    }
-
-    private static String shortId(String s){
-        if(s==null)return "";
-        return s.substring(0,Math.min(12,s.length()));
-    }
-
-    private static String safeLog(String s){
-        if(s==null)return "unknown";
-        return s.replace('\n',' ').replace('\r',' ').replace('|','/');
-    }
-
     private static int sentenceCount(String s){
         if(s==null||s.trim().isEmpty())return 0;
-        Matcher m=Pattern.compile("[.!?](?=\s|$)").matcher(s);
+        Matcher m=Pattern.compile("[.!?](?=\\s|$)").matcher(s);
         int n=0;while(m.find())n++;
         return Math.max(1,n);
     }
@@ -390,7 +387,7 @@ public final class TranslationJob {
         List<String> out=new ArrayList<>();
         if(s==null)return out;
         Matcher m=Pattern.compile(
-                "(?i)(?<![A-Za-z0-9])(?:\d+(?:[.,]\d+)?(?:–|-|to)\d+(?:[.,]\d+)?%?|\d+(?:[.,]\d+)?%|\d+:[0-9]+|[A-Z]{2,}\d*(?:[.-]\d+)+)(?![A-Za-z0-9])")
+                "(?i)(?<![A-Za-z0-9])(?:\\d+(?:[.,]\\d+)?(?:–|-|to)\\d+(?:[.,]\\d+)?%?|\\d+(?:[.,]\\d+)?%|\\d+:[0-9]+|[A-Z]{2,}\\d*(?:[.-]\\d+)+)(?![A-Za-z0-9])")
                 .matcher(s);
         while(m.find())out.add(m.group().toLowerCase(Locale.US));
         return out;
@@ -412,6 +409,9 @@ public final class TranslationJob {
         try{
             return translateOneBatch(batch,providers,glossary);
         }catch(Exception e){
+            // Keep the batch alive so each unit gets its own recovery attempt.
+            // An empty map means no translation is trusted; the original EPUB
+            // source is retained for every unit that still fails.
             return new BatchResult(batch,new HashMap<>(),
                     "Batch failed; recovering units independently. "+e.getMessage());
         }
@@ -457,12 +457,6 @@ public final class TranslationJob {
         }
         return out;
     }
-
-    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\n").replace("\r","\r");}
-    private static String strip(String s){return s.replaceAll("<[^>]+>"," ").replaceAll("&[a-zA-Z#0-9]+;"," ").replaceAll("\\s+"," ").trim();}
-    private static boolean blank(String s){return s==null||s.trim().isEmpty();}
-    private static String read(ZipFile z,ZipEntry e)throws Exception{try(InputStream in=z.getInputStream(e);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString(StandardCharsets.UTF_8.name());}}
-    private static void copyFile(File s,File t)throws IOException{File p=t.getParentFile();if(p!=null&&!p.exists())p.mkdirs();try(InputStream in=new FileInputStream(s);OutputStream o=new FileOutputStream(t)){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);}}
 
     private static void rebuild(File source,File output,List<Unit> units,Map<String,String> done)throws Exception{
         Map<String,List<Rep>> byFile=new LinkedHashMap<>();
@@ -522,10 +516,23 @@ public final class TranslationJob {
         int a=t.indexOf("<"),b=t.lastIndexOf(">");
         return a>0&&b>a?t.substring(a,b+1).trim():t;
     }
-    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\n").replace("\r","\r");}
-    private static String strip(String s){return s.replaceAll("<[^>]+>"," ").replaceAll("&[a-zA-Z#0-9]+;"," ").replaceAll("\\\\s+"," ").trim();}
+    private static String json(String s){return s.replace("\\","\\\\").replace("\"","\\\"").replace("\n","\\n").replace("\r","\\r");}
+    private static String strip(String s){return s.replaceAll("<[^>]+>"," ").replaceAll("&[a-zA-Z#0-9]+;"," ").replaceAll("\\s+"," ").trim();}
     private static boolean blank(String s){return s==null||s.trim().isEmpty();}
     private static String read(ZipFile z,ZipEntry e)throws Exception{try(InputStream in=z.getInputStream(e);ByteArrayOutputStream o=new ByteArrayOutputStream()){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);return o.toString(StandardCharsets.UTF_8.name());}}
     private static void copyFile(File s,File t)throws IOException{File p=t.getParentFile();if(p!=null&&!p.exists())p.mkdirs();try(InputStream in=new FileInputStream(s);OutputStream o=new FileOutputStream(t)){byte[] b=new byte[16384];int n;while((n=in.read(b))>0)o.write(b,0,n);}}
- 
-    private static final class Candidate{\n        final int start,end; final String tag,attrs,inner;\n        Candidate(int start,int end,String tag,String attrs,String inner){this.start=start;this.end=end;this.tag=tag;this.attrs=attrs;this.inner=inner;}\n    }\n\n    private static final class Unit{\n        final String id,file,tag,attrs,inner,sourceHash;final int ordinal;final boolean translatable;\n        Unit(String id,String file,int ordinal,String tag,String attrs,String inner,String sh,boolean tr){this.id=id;this.file=file;this.ordinal=ordinal;this.tag=tag;this.attrs=attrs;this.inner=inner;this.sourceHash=sh;this.translatable=tr;}\n    }\n    private static final class Rep{final Unit u;final String t;Rep(Unit u,String t){this.u=u;this.t=t;}}\n    private static final class BatchResult{\n        final List<Unit> batch;final Map<String,String> translations;final String context;\n        BatchResult(List<Unit> b,Map<String,String> t,String c){batch=b;translations=t;context=c;}\n    }\n}\n
+
+    private static final class Candidate{
+        final int start,end; final String tag,attrs,inner;
+        Candidate(int start,int end,String tag,String attrs,String inner){this.start=start;this.end=end;this.tag=tag;this.attrs=attrs;this.inner=inner;}
+    }
+
+    private static final class Unit{
+        final String id,file,tag,attrs,inner,sourceHash;final int ordinal;final boolean translatable;
+        Unit(String id,String file,int ordinal,String tag,String attrs,String inner,String sh,boolean tr){this.id=id;this.file=file;this.ordinal=ordinal;this.tag=tag;this.attrs=attrs;this.inner=inner;this.sourceHash=sh;this.translatable=tr;}
+    }
+    private static final class Rep{final Unit u;final String t;Rep(Unit u,String t){this.u=u;this.t=t;}}
+    private static final class BatchResult{
+        final List<Unit> batch;final Map<String,String> translations;final String context;
+        BatchResult(List<Unit> b,Map<String,String> t,String c){batch=b;translations=t;context=c;}
+    }}
