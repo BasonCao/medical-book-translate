@@ -338,7 +338,8 @@ public class MainActivity extends Activity {
         boolean freeOnly=prefsHolder.getBoolean(PREF_FREE_POOL,true),allowPaid=prefsHolder.getBoolean(PREF_ALLOW_PAID,false);
         String selected=providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT));
         String[] order=freeOnly?new String[]{selected,PROVIDERS[0],PROVIDERS[1],allowPaid?PROVIDERS[2]:"",allowPaid?PROVIDERS[3]:"",allowPaid?PROVIDERS[4]:"",allowPaid?PROVIDERS[5]:""}:new String[]{selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3],PROVIDERS[4],PROVIDERS[5]};
-        List<TranslationRouter.Provider> out=new ArrayList<>();HashSet<String> seen=new HashSet<>();
+        List<TranslationRouter.Provider> out=new ArrayList<>(offlineFirst);HashSet<String> seen=new HashSet<>();
+        for(TranslationRouter.Provider op:offlineFirst)seen.add(op.name);
         for(String p:order){
             if(p==null||p.isEmpty()||!seen.add(p))continue;
             if(freeOnly&&!isFreePoolProvider(p)&&!allowPaid)continue;
