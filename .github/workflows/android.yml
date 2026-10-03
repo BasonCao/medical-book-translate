@@ -30,7 +30,7 @@ jobs:
         run: |
           sdkmanager "ndk;29.0.14206865"
           export ANDROID_NDK="$ANDROID_SDK_ROOT/ndk/29.0.14206865"
-          git clone --depth 1 https://github.com/Acceldium/llama.cpp.git llama.cpp
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
           cd llama.cpp
           git fetch --depth 1 origin pull/18359/head:nllb-pr
           git checkout nllb-pr
