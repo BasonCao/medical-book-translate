@@ -42,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/llama-nllb" "$RUNNER_TEMP/llama-nllb.tar.gz"
-          curl -L --fail --retry 3 "https://github.com/drizzt/llama.cpp/archive/a13959a.tar.gz" -o "$RUNNER_TEMP/llama-nllb.tar.gz"
+          curl -L --fail --retry 3 "https://github.com/drizzt/llama.cpp/archive/d836a39f379204b9e96ece3547477854f181eb8b.tar.gz" -o "$RUNNER_TEMP/llama-nllb.tar.gz"
           mkdir -p "$RUNNER_TEMP/llama-nllb"
           tar -xzf "$RUNNER_TEMP/llama-nllb.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/llama-nllb"
           cd "$RUNNER_TEMP/llama-nllb"
