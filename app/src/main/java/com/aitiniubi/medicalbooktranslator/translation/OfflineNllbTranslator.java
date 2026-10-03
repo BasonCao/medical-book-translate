@@ -47,7 +47,7 @@ public final class OfflineNllbTranslator {
     }
     private static String run(Context c,File model,String text)throws Exception{
         File exe=OfflineModelManager.binary(c);if(!exe.isFile()||!exe.canExecute())throw new IOException("NLLB engine chưa sẵn sàng.");
-        ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),model.getAbsolutePath(),"eng_Latn "+text,"vie_Latn");pb.redirectErrorStream(true);
+        ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),"-m",model.getAbsolutePath(),"-p",text,"-sl","eng_Latn","-tl","vie_Latn","-n","200","-t","4");pb.redirectErrorStream(true);
         Process p=pb.start();ByteArrayOutputStream buf=new ByteArrayOutputStream();
         try(InputStream in=p.getInputStream()){
             byte[] b=new byte[8192];int n;long deadline=System.currentTimeMillis()+120000L;
