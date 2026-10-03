@@ -258,7 +258,7 @@ public final class TranslationJob {
             // Last recovery path: a very small, plain prompt. This is important
             // for short headings/captions and for models that occasionally return
             // an empty batch item even though the API request itself succeeded.
-            String direct=translateDirect(u,context,providers);
+            String direct=translateDirect(androidContext,u,context,providers);
             String directReason=validationReason(u,direct);
             if(directReason==null)return direct;
 
