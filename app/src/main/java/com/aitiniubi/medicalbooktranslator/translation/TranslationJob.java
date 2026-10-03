@@ -38,6 +38,10 @@ public final class TranslationJob {
                 if(source==null||!source.isFile())throw new IOException("Không tìm thấy EPUB nguồn.");
                 if(providers==null||providers.isEmpty())throw new IOException("Chưa cấu hình AI provider nào có API key.");
 
+                final TranslationLogger logger=new TranslationLogger(workspace);
+                TranslationLogger.bind(logger);
+                TranslationRouter.setDiagnostics(logger,"AI_CALL");
+
                 List<Unit> units=extractUnits(source);
                 String sourceHash=TranslationStateStore.sha256(source);
                 int total=0;
