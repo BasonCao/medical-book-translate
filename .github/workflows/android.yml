@@ -32,18 +32,9 @@ jobs:
           export ANDROID_NDK="$ANDROID_SDK_ROOT/ndk/29.0.14206865"
           git clone --depth 1 --branch master https://github.com/Acceldium/llama.cpp.git llama.cpp
           cd llama.cpp
-          git checkout 93a155d7edd1f094adf163ff2d1c69aacbee6b48
+          git checkout 93a155d
           cd ..
-          cat > CMakeLists.txt <<'EOF'
-          cmake_minimum_required(VERSION 3.18)
-          project(nllb_android LANGUAGES C CXX)
-          add_subdirectory(llama.cpp llama)
-          add_executable(nllb-simple llama.cpp/examples/nllb-translation/nllb-simple.cpp)
-          target_link_libraries(nllb-simple PRIVATE llama)
-          target_include_directories(nllb-simple PRIVATE llama.cpp/include llama.cpp/src)
-          set_target_properties(nllb-simple PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-          EOF
-          cmake -S . -B nllb-build \
+          cmake -S llama.cpp -B llama-build \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-28 \
@@ -52,10 +43,13 @@ jobs:
             -DLLAMA_OPENSSL=OFF \
             -DLLAMA_CURL=OFF \
             -DBUILD_SHARED_LIBS=OFF \
-            -DLLAMA_BUILD_TOOLS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF
-          cmake --build nllb-build --config Release --target nllb-simple --parallel 2
-          test -f nllb-build/bin/nllb-simple
+            -DLLAMA_BUILD_TOOLS=ON \
+            -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build llama-build --config Release --target nllb-simple --parallel 2
+          test -f llama-build/bin/nllb-simple
+          mkdir -p app/src/main/assets
+          cp llama-build/bin/nllb-simple app/src/main/assets/nllb-simple
+          chmod 755 app/src/main/assets/nllb-simple
           mkdir -p app/src/main/assets
           cp nllb-build/bin/nllb-simple app/src/main/assets/nllb-simple
           chmod 755 app/src/main/assets/nllb-simple
