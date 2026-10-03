@@ -30,10 +30,11 @@ jobs:
         run: |
           sdkmanager "ndk;29.0.14206865"
           export ANDROID_NDK="$ANDROID_SDK_ROOT/ndk/29.0.14206865"
-          git clone --filter=blob:none --no-checkout https://github.com/Acceldium/llama.cpp.git llama.cpp
+          git clone --depth 1 https://github.com/Acceldium/llama.cpp.git llama.cpp
           cd llama.cpp
           git fetch --depth 1 origin 93a155d
           git checkout --detach 93a155d
+          test -f examples/nllb-translation/nllb-simple.cpp
           cd ..
           cmake -S llama.cpp -B llama-build \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
