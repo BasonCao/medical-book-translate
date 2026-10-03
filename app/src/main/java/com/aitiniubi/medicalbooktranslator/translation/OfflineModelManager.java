@@ -8,9 +8,10 @@ import okhttp3.Response;
 
 /** Manages the optional on-device NLLB-200 distilled 600M Q4_0 model. */
 public final class OfflineModelManager {
-    public static final String MODEL_FILE = "nllb-600m-Q4_0.gguf";
+    public static final String MODEL_FILE = "nllb-600m.gguf";
     public static final String BINARY_FILE = "nllb-simple";
-    public static final String MODEL_URL = "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf";
+    public static final String MODEL_URL = "https://huggingface.co/JosephTu/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf";
+    private static final String MODEL_URL_FALLBACK = "https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf";
     private static final long MIN_MODEL_BYTES = 450L * 1024L * 1024L;
     private OfflineModelManager() {}
     public interface Progress { void onProgress(long done, long total); }
@@ -41,15 +42,26 @@ public final class OfflineModelManager {
     public static void downloadModel(Context c, Progress progress) throws Exception {
         File dir=root(c); if(!dir.exists()&&!dir.mkdirs()) throw new IOException("Không tạo được thư mục model offline.");
         File tmp=new File(dir,MODEL_FILE+".part"), dst=model(c);
-        OkHttpClient client=new OkHttpClient.Builder().build();
-        Request req=new Request.Builder().url(MODEL_URL).header("User-Agent","MedBook-Dich-AI/1.13").build();
-        try(Response res=client.newCall(req).execute()){
-            if(!res.isSuccessful()||res.body()==null) throw new IOException("Tải model NLLB thất bại: HTTP "+res.code());
-            long total=res.body().contentLength();
-            try(InputStream in=res.body().byteStream();OutputStream out=new BufferedOutputStream(new FileOutputStream(tmp))){
-                byte[] buf=new byte[1024*1024]; long done=0; int n;
-                while((n=in.read(buf))>0){out.write(buf,0,n);done+=n;if(progress!=null)progress.onProgress(done,total);}
-            }
+        OkHttpClient client=new OkHttpClient.Builder().followRedirects(true).followSslRedirects(true).build();
+        IOException last=null;
+        String[] urls=new String[]{MODEL_URL,MODEL_URL_FALLBACK};
+        for(String url:urls){
+            tmp.delete();
+            Request req=new Request.Builder().url(url).header("User-Agent","MedBook-Dich-AI/1.13.1").header("Accept","application/octet-stream").build();
+            try(Response res=client.newCall(req).execute()){
+                if(!res.isSuccessful()||res.body()==null){ last=new IOException("HTTP "+res.code()+" từ "+url); continue; }
+                long total=res.body().contentLength();
+                try(InputStream in=res.body().byteStream();OutputStream out=new BufferedOutputStream(new FileOutputStream(tmp))){
+                    byte[] buf=new byte[1024*1024]; long done=0; int n;
+                    while((n=in.read(buf))>0){out.write(buf,0,n);done+=n;if(progress!=null)progress.onProgress(done,total);}
+                }
+                if(tmp.length()>=MIN_MODEL_BYTES) break;
+                last=new IOException("Model tải về quá nhỏ: "+tmp.length()+" bytes từ "+url);
+            } catch(IOException e){ last=e; }
+        }
+        if(tmp.length()<MIN_MODEL_BYTES){
+            tmp.delete();
+            throw new IOException("Tải model NLLB thất bại. Nguồn chính và nguồn dự phòng đều không khả dụng. "+(last!=null?last.getMessage():""));
         }
         if(tmp.length()<MIN_MODEL_BYTES){tmp.delete();throw new IOException("Model tải về không đầy đủ: "+tmp.length()+" bytes");}
         if(dst.exists()&&!dst.delete())throw new IOException("Không thay thế được model cũ.");
