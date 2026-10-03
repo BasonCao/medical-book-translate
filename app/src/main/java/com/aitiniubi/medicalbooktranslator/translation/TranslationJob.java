@@ -80,7 +80,7 @@ public final class TranslationJob {
                 while(next<pending.size() && submitted<parallelism){
                     List<Unit> batch=makeBatch(pending,next); next+=batch.size(); submitted++;
                     logger.event("BATCH_SUBMIT", "batch=" + submitted + " units=" + batch.size() + " chars=" + batchChars(batch));
-                    completion.submit(()->translateOneBatchSafe(batch,providers,glossary));
+                    completion.submit(()->translateOneBatchSafe(androidContext,batch,providers,glossary));
                 }
                 try{
                     while(completedBatches<submitted){
@@ -100,7 +100,7 @@ public final class TranslationJob {
                         for(Unit u:batch){
                             String t=got.get(u.id);
                             try{
-                                t=translateValidatedUnit(u,t,br.context,providers);
+                                t=translateValidatedUnit(androidContext,u,t,br.context,providers);
                                 store.put(new TranslationStateStore.Record(u.id,u.file,u.sourceHash,t));
                                 doneMap.put(u.id,t);done++;
                                 listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
@@ -122,7 +122,7 @@ public final class TranslationJob {
                         store.saveManifest(sourceHash,source.getName(),total,done);
                         if(next<pending.size()){
                             List<Unit> nextBatch=makeBatch(pending,next);next+=nextBatch.size();submitted++;
-                            completion.submit(()->translateOneBatchSafe(nextBatch,providers,glossary));
+                            completion.submit(()->translateOneBatchSafe(androidContext,nextBatch,providers,glossary));
                         }
                     }
                 }catch(Exception e){
@@ -205,7 +205,7 @@ public final class TranslationJob {
         Matcher m=Pattern.compile("[À-ỹĐđ]{2,}").matcher(s);int n=0;while(m.find())n++;return n;
     }
 
-    private static String translateValidatedUnit(Unit u,String candidate,
+    private static String translateValidatedUnit(Context androidContext,Unit u,String candidate,
                                                      String context,
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
@@ -216,7 +216,7 @@ public final class TranslationJob {
         // "Seizure", "Renal", and similar 1–3 word headings.
         if(sourcePlain.length()<=80){
             try{
-                String direct=translateDirect(u,context,providers);
+                String direct=translateDirect(androidContext,u,context,providers);
                 if(validationReason(u,direct)==null)return direct;
             }catch(Exception ignored){}
         }
@@ -251,7 +251,7 @@ public final class TranslationJob {
             // Final fallback: translate each source sentence independently.
             // This prevents a model from silently dropping one or more sentences
             // after the normal whole-unit retries.
-            String fallback=translateBySentences(u,context,providers);
+            String fallback=translateBySentences(androidContext,u,context,providers);
             String fallbackReason=validationReason(u,fallback);
             if(fallbackReason==null)return fallback;
 
@@ -273,7 +273,7 @@ public final class TranslationJob {
         return validationReason(u,translation)==null;
     }
 
-    private static String translateDirect(Unit u,String context,
+    private static String translateDirect(Context androidContext,Unit u,String context,
                                            List<TranslationRouter.Provider> providers)
             throws Exception{
         Map<String,String> marks=new LinkedHashMap<>();
@@ -286,7 +286,7 @@ public final class TranslationJob {
         return clean(restoreMarkup(response,marks));
     }
 
-    private static String translateBySentences(Unit u,String context,
+    private static String translateBySentences(Context androidContext,Unit u,String context,
                                                     List<TranslationRouter.Provider> providers)
             throws Exception{
         Map<String,String> marks=new LinkedHashMap<>();
@@ -410,9 +410,9 @@ public final class TranslationJob {
         return b;
     }
 
-    private static BatchResult translateOneBatchSafe(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary){
+    private static BatchResult translateOneBatchSafe(Context androidContext,List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary){
         try{
-            return translateOneBatch(batch,providers,glossary);
+            return translateOneBatch(androidContext,batch,providers,glossary);
         }catch(Exception e){
             // Keep the batch alive so each unit gets its own recovery attempt.
             // An empty map means no translation is trusted; the original EPUB
@@ -422,17 +422,17 @@ public final class TranslationJob {
         }
     }
 
-    private static BatchResult translateOneBatch(List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
+    private static BatchResult translateOneBatch(Context androidContext,List<Unit> batch,List<TranslationRouter.Provider> providers,List<GlossaryManager.Term> glossary)throws Exception{
         StringBuilder context=new StringBuilder("Medical obstetric ultrasound / fetal medicine textbook. Translate English to professional Vietnamese. Preserve medical terminology, abbreviations, numbers, units, citations and inline HTML/XML markup.");
         StringBuilder combined=new StringBuilder();
         for(Unit u:batch)combined.append(strip(u.inner)).append("\n");
         String gt=GlossaryManager.promptTerms(combined.toString(),glossary);
         if(!gt.isEmpty())context.append("\n\n").append(gt);
-        Map<String,String> got=translateBatch(batch,context.toString(),providers);
+        Map<String,String> got=translateBatch(androidContext,batch,context.toString(),providers);
         return new BatchResult(batch,got,context.toString());
     }
 
-    private static Map<String,String> translateBatch(List<Unit> batch,String context,List<TranslationRouter.Provider> providers)throws Exception{
+    private static Map<String,String> translateBatch(Context androidContext,List<Unit> batch,String context,List<TranslationRouter.Provider> providers)throws Exception{
         StringBuilder s=new StringBuilder();
         s.append("Return ONLY a JSON array. Each object has exactly id and translation. Keep IDs unchanged. ");
         s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.\n");
