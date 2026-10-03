@@ -461,25 +461,46 @@ public final class TranslationJob {
         return out;
     }
 
+    private static List<Candidate> findCandidates(String x){
+        List<Candidate> candidates=new ArrayList<>();
+        Matcher m=BLOCK.matcher(x);
+        while(m.find()) candidates.add(new Candidate(m.start(),m.end(),m.group(1),m.group(2),m.group(3)));
+
+        // Keep leaf containers consistent with extractUnits(). These elements
+        // are valid translation units when they contain direct prose and no
+        // nested block element. rebuild() must use the exact same candidate
+        // ordering, otherwise an ordinal can point to a different element.
+        Matcher cm=CONTAINER_BLOCK.matcher(x);
+        while(cm.find()){
+            Matcher child=ANY_BLOCK_TAG.matcher(cm.group(3));
+            if(!child.find()) candidates.add(new Candidate(cm.start(),cm.end(),cm.group(1),cm.group(2),cm.group(3)));
+        }
+        candidates.sort(Comparator.comparingInt(a->a.start));
+        return candidates;
+    }
+
     private static void rebuild(File source,File output,List<Unit> units,Map<String,String> done)throws Exception{
         Map<String,List<Rep>> byFile=new LinkedHashMap<>();
-        for(Unit u:units){String t=done.get(u.id);if(!blank(t))byFile.computeIfAbsent(u.file,k->new ArrayList<>()).add(new Rep(u,t));}
+        for(Unit u:units){
+            String t=done.get(u.id);
+            if(!blank(t))byFile.computeIfAbsent(u.file,k->new ArrayList<>()).add(new Rep(u,t));
+        }
         Map<String,String> replacements=new HashMap<>();
         try(ZipFile zip=new ZipFile(source)){
             for(Map.Entry<String,List<Rep>> e:byFile.entrySet()){
                 ZipEntry ze=zip.getEntry(e.getKey());if(ze==null)continue;
-                String x=read(zip,ze);List<Rep> rs=e.getValue();
+                String x=read(zip,ze);
+                List<Candidate> candidates=findCandidates(x);
+                List<Rep> rs=e.getValue();
                 rs.sort((a,b)->Integer.compare(b.u.ordinal,a.u.ordinal));
+
                 for(Rep r:rs){
-                    Matcher m=BLOCK.matcher(x);int i=0;boolean replaced=false;
-                    while(m.find()){
-                        if(i==r.u.ordinal){
-                            String rep="<"+m.group(1)+m.group(2)+">"+r.t+"</"+m.group(1)+">";
-                            x=x.substring(0,m.start())+rep+x.substring(m.end());replaced=true;break;
-                        }
-                        i++;
+                    if(r.u.ordinal<0 || r.u.ordinal>=candidates.size()){
+                        throw new IOException("Không tìm thấy translation unit "+r.u.id+" khi rebuild.");
                     }
-                    if(!replaced)throw new IOException("Không tìm thấy translation unit "+r.u.id+" khi rebuild.");
+                    Candidate q=candidates.get(r.u.ordinal);
+                    String rep="<"+q.tag+q.attrs+">"+r.t+"</"+q.tag+">";
+                    x=x.substring(0,q.start)+rep+x.substring(q.end);
                 }
                 replacements.put(e.getKey(),x);
             }
