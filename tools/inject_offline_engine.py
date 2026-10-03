@@ -29,7 +29,7 @@ def main():
     if engine.stat().st_size < 10_000_000:
         raise SystemExit(f"engine is unexpectedly small: {engine.stat().st_size} bytes")
 
-    arc = "lib/arm64-v8a/libnllb-simple.so"
+    arc = "assets/offline-engine/nllb-simple"
 
     with tempfile.NamedTemporaryFile(prefix="mbt-apk-", suffix=".apk", delete=False, dir=dst.parent) as tmp:
         tmp_path = Path(tmp.name)
