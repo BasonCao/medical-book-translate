@@ -105,7 +105,7 @@ public final class PdfTranslationJob {
                                   .append(units.get(i).source).append("\\n");
                         }
                         String translated=TranslationRouter.translate(prompt.toString(),
-                                "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers);
+                                "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers,context);
                         if(translated==null||translated.trim().isEmpty())
                             throw new IOException("AI trả về bản dịch rỗng ở trang "+pageNo);
                         String normalized=parseUnitResponse(translated,units.size(),pageNo);
