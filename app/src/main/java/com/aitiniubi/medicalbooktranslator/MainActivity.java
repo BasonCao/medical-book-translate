@@ -69,7 +69,8 @@ public class MainActivity extends Activity {
         translate=findViewById(R.id.translateButton);
         Button settings=findViewById(R.id.settingsButton);
         Button glossary=findViewById(R.id.glossaryButton);
-        export=findViewById(R.id.exportButton);\n        logButton=findViewById(R.id.logButton);
+        export=findViewById(R.id.exportButton);
+        logButton=findViewById(R.id.logButton);
         reset=findViewById(R.id.resetButton);
         pdfLayout=findViewById(R.id.pdfLayoutButton);
         pdfOneColumn=findViewById(R.id.pdfOneColumnButton);
@@ -140,7 +141,9 @@ public class MainActivity extends Activity {
         }
         if(r==13&&c==RESULT_OK&&d!=null){
             try(FileInputStream in=new FileInputStream(new File(workspace,"translation-debug.log"));OutputStream out=getContentResolver().openOutputStream(d.getData())){
-                if(out==null)throw new IOException("Không mở được nơi lưu log.");\n                byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);\n                Toast.makeText(this,"Đã xuất translation-debug.log",Toast.LENGTH_LONG).show();
+                if(out==null)throw new IOException("Không mở được nơi lưu log.");
+                byte[] b=new byte[16384];int n;while((n=in.read(b))>0)out.write(b,0,n);
+                Toast.makeText(this,"Đã xuất translation-debug.log",Toast.LENGTH_LONG).show();
             }catch(Exception e){showError(e);}
             return;
         }
@@ -911,9 +914,16 @@ public class MainActivity extends Activity {
     }
 
     private void exportTranslationLog(){
-        if(workspace==null){Toast.makeText(this,"Chưa có workspace dịch.",Toast.LENGTH_SHORT).show();return;}\n        File log=new File(workspace,"translation-debug.log");
-        if(!log.isFile()){Toast.makeText(this,"Chưa có log. Hãy chạy Dịch / Tiếp tục trước.",Toast.LENGTH_SHORT).show();return;}\n        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);\n        i.setType("text/plain");\n        i.putExtra(Intent.EXTRA_TITLE,"translation-debug.log");\n        startActivityForResult(i,13);
-    }\n\n    private void saveOutput(){
+        if(workspace==null){Toast.makeText(this,"Chưa có workspace dịch.",Toast.LENGTH_SHORT).show();return;}
+        File log=new File(workspace,"translation-debug.log");
+        if(!log.isFile()){Toast.makeText(this,"Chưa có log. Hãy chạy Dịch / Tiếp tục trước.",Toast.LENGTH_SHORT).show();return;}
+        Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.setType("text/plain");
+        i.putExtra(Intent.EXTRA_TITLE,"translation-debug.log");
+        startActivityForResult(i,13);
+    }
+
+    private void saveOutput(){
         if(lastOutput==null||!lastOutput.isFile()){Toast.makeText(this,pdfMode?"Chưa có PDF draft.":"Chưa có EPUB draft.",Toast.LENGTH_SHORT).show();return;}
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.setType(pdfMode?"application/pdf":"application/epub+zip");
