@@ -44,10 +44,12 @@ public class MainActivity extends Activity {
     private static final String PREF_CUSTOM_KEY="apiKey_custom";
     private static final String PREF_FREE_POOL="free_ai_pool";
     private static final String PREF_ALLOW_PAID="allow_paid_fallback";
+    private static final String OFFLINE_PROVIDER="Offline NLLB-600M";
+    private static final String OFFLINE_MODEL_ID="nllb-600m-Q4_0";
 
     private TextView status,report;
     private ProgressBar progress;
-    private Button analyze,translate,export,reset,logButton,pdfLayout,pdfOneColumn,pdfKeepLayout;
+    private Button analyze,translate,export,reset,logButton,pdfLayout,pdfOneColumn,pdfKeepLayout,offlineButton;
     private File selectedFile,lastOutput,workspace;
     private EpubBook book;
     private PdfBook pdfBook;
@@ -59,7 +61,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         setContentView(com.aitiniubi.medicalbooktranslator.R.layout.activity_main);
         TextView appTitle=findViewById(R.id.appTitle);
-        appTitle.setText("Medical Book Translator V1.12.0");
+        appTitle.setText("Medical Book Translator V1.13.0");
         prefsHolder=getSharedPreferences("config",MODE_PRIVATE);
         status=findViewById(R.id.status);
         report=findViewById(R.id.report);
@@ -75,6 +77,7 @@ public class MainActivity extends Activity {
         pdfLayout=findViewById(R.id.pdfLayoutButton);
         pdfOneColumn=findViewById(R.id.pdfOneColumnButton);
         pdfKeepLayout=findViewById(R.id.pdfKeepLayoutButton);
+        offlineButton=findViewById(R.id.offlineButton);
 
         open.setOnClickListener(v->pick());
         analyze.setOnClickListener(v->analyze());
@@ -85,6 +88,8 @@ public class MainActivity extends Activity {
         pdfLayout.setOnClickListener(v->choosePdfLayoutAndTranslate(fallbackProviders()));
         pdfOneColumn.setOnClickListener(v->startPdfWithLayout(true));
         pdfKeepLayout.setOnClickListener(v->startPdfWithLayout(false));
+        if(offlineButton!=null) offlineButton.setOnClickListener(v->manageOfflineModel());
+        updateOfflineButton();
         updatePdfLayoutButtons();
         reset.setOnClickListener(v->resetProgress());
         if(logButton!=null) logButton.setOnClickListener(v->exportTranslationLog());
@@ -266,6 +271,7 @@ public class MainActivity extends Activity {
     }
 
     private String providerKey(String provider){
+        if(provider.equals(OFFLINE_PROVIDER))return "local";
         if(provider.equals(PROVIDERS[0])){
             String k=prefsHolder.getString(PREF_OR_KEY,"");
             if(k.isEmpty()&&providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT)).equals(PROVIDERS[0]))k=prefsHolder.getString("apiKey","");
@@ -279,6 +285,7 @@ public class MainActivity extends Activity {
     }
 
     private String providerModel(String provider){
+        if(provider.equals(OFFLINE_PROVIDER))return OFFLINE_MODEL_ID;
         if(provider.equals(PROVIDERS[0])){
             String m=prefsHolder.getString("model_openrouter",DEFAULT_OR_MODEL);
             return "openrouter/free".equals(m)?DEFAULT_OR_MODEL:m;
@@ -292,6 +299,7 @@ public class MainActivity extends Activity {
 
     private TranslationConfig makeProviderConfig(String p){
         TranslationConfig c=new TranslationConfig();
+        if(p.equals(OFFLINE_PROVIDER)){c.endpoint="offline://nllb";c.model=OFFLINE_MODEL_ID;c.apiKey="local";return c;}
         if(p.equals(PROVIDERS[0]))c.endpoint=OPENROUTER_ENDPOINT;
         else if(p.equals(PROVIDERS[1]))c.endpoint=GEMINI_ENDPOINT;
         else if(p.equals(PROVIDERS[2]))c.endpoint=OPENAI_ENDPOINT;
@@ -302,6 +310,7 @@ public class MainActivity extends Activity {
     }
 
     private boolean isFreePoolProvider(String p){
+        if(p.equals(OFFLINE_PROVIDER)) return true;
         if(p.equals(PROVIDERS[0])) return true;
         if(p.equals(PROVIDERS[1])) return isFreeGeminiModel(providerModel(p));
         return false;
@@ -318,7 +327,14 @@ public class MainActivity extends Activity {
 
     private List<TranslationRouter.Provider> fallbackProviders(){
         List<TranslationRouter.Provider> profiles=savedProfileProviders();
-        if(!profiles.isEmpty())return profiles;
+        List<TranslationRouter.Provider> offlineFirst=new ArrayList<>();
+        if(prefsHolder.getBoolean("offline_enabled",true) && OfflineModelManager.isReady(this)){
+            offlineFirst.add(new TranslationRouter.Provider(OFFLINE_PROVIDER,makeProviderConfig(OFFLINE_PROVIDER)));
+        }
+        if(!profiles.isEmpty()){
+            offlineFirst.addAll(profiles);
+            return offlineFirst;
+        }
         boolean freeOnly=prefsHolder.getBoolean(PREF_FREE_POOL,true),allowPaid=prefsHolder.getBoolean(PREF_ALLOW_PAID,false);
         String selected=providerFor(prefsHolder.getString("endpoint",OPENROUTER_ENDPOINT));
         String[] order=freeOnly?new String[]{selected,PROVIDERS[0],PROVIDERS[1],allowPaid?PROVIDERS[2]:"",allowPaid?PROVIDERS[3]:"",allowPaid?PROVIDERS[4]:"",allowPaid?PROVIDERS[5]:""}:new String[]{selected,PROVIDERS[0],PROVIDERS[1],PROVIDERS[2],PROVIDERS[3],PROVIDERS[4],PROVIDERS[5]};
@@ -749,6 +765,58 @@ public class MainActivity extends Activity {
         return out;
     }
 
+    private void updateOfflineButton(){
+        if(offlineButton==null)return;
+        if(OfflineModelManager.isReady(this)){
+            offlineButton.setText("🧠 Dịch OFFLINE — NLLB 600M ✓");
+        }else if(OfflineModelManager.isModelReady(this)){
+            offlineButton.setText("🧠 Kích hoạt engine OFFLINE NLLB");
+        }else{
+            offlineButton.setText("🧠 Cài model DỊCH OFFLINE — NLLB 600M (~495 MB)");
+        }
+    }
+
+    private void manageOfflineModel(){
+        if(OfflineModelManager.isReady(this)){
+            prefsHolder.edit().putBoolean("offline_enabled",true).apply();
+            updateOfflineButton();
+            Toast.makeText(this,"Offline NLLB đã sẵn sàng. Khi dịch, app sẽ ưu tiên model local.",Toast.LENGTH_LONG).show();
+            return;
+        }
+        if(OfflineModelManager.isModelReady(this) && OfflineModelManager.ensureBinary(this)){
+            prefsHolder.edit().putBoolean("offline_enabled",true).apply();
+            updateOfflineButton();
+            Toast.makeText(this,"Đã kích hoạt engine NLLB offline.",Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Dịch offline NLLB-200 600M")
+            .setMessage("Model Q4_0 khoảng 495 MB. Sau khi tải xong, dịch có thể chạy không cần Internet và không cần API key. Model được lưu trong bộ nhớ riêng của app.")
+            .setNegativeButton("Hủy",null)
+            .setPositiveButton("Tải model", (d,w)->downloadOfflineModel())
+            .show();
+    }
+
+    private void downloadOfflineModel(){
+        if(offlineButton!=null)offlineButton.setEnabled(false);
+        progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
+        report.setText("⬇ Đang tải model NLLB-600M Q4_0…");
+        new Thread(()->{
+            try{
+                OfflineModelManager.downloadModel(this,(done,total)->{
+                    int p=total>0?(int)Math.min(100,(done*100L)/total):0;
+                    runOnUiThread(()->{progress.setProgress(p);report.setText("⬇ Tải model offline: "+p+"%\n"+(done/(1024*1024))+" / "+(total>0?total/(1024*1024):0)+" MB");});
+                });
+                boolean ready=OfflineModelManager.isReady(this);
+                if(!ready)throw new IOException("Model đã tải nhưng engine NLLB chưa sẵn sàng.");
+                prefsHolder.edit().putBoolean("offline_enabled",true).apply();
+                runOnUiThread(()->{progress.setVisibility(View.GONE);if(offlineButton!=null)offlineButton.setEnabled(true);updateOfflineButton();report.setText("✅ Dịch OFFLINE NLLB-600M đã sẵn sàng.\nKhông cần Internet/API key khi dịch.");});
+            }catch(Exception e){
+                runOnUiThread(()->{progress.setVisibility(View.GONE);if(offlineButton!=null)offlineButton.setEnabled(true);updateOfflineButton();showError(e);});
+            }
+        },"offline-model-download").start();
+    }
+
     private void translate(){
         if(translating)return;
         if(selectedFile==null){pick();return;}
@@ -763,7 +831,7 @@ public class MainActivity extends Activity {
         translating=true;translate.setEnabled(false);reset.setEnabled(false);
         export.setEnabled(false);progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
         report.setText("🤖 Translation Queue đang chạy\nBatch tối đa 8 unit / request\nMỗi batch hoàn thành sẽ được lưu ngay.");
-        TranslationJob.run(selectedFile,out,workspace,providers,new TranslationJob.Listener(){
+        TranslationJob.run(this,selectedFile,out,workspace,providers,new TranslationJob.Listener(){
             public void onProgress(int d,int t,int batch,String info){
                 int p=t<=0?0:(int)(100.0*d/t);
                 runOnUiThread(()->{progress.setProgress(p);status.setText("Dịch: "+d+"/"+t+" unit | batch "+batch);report.setText(info+"\n"+d+"/"+t+" unit\n\nNếu hết quota: draft vẫn được lưu, bấm Dịch / Tiếp tục vào ngày khác.");});
