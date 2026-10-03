@@ -126,7 +126,8 @@ public final class TranslationJob {
                     listener.onPaused(draft,done,total,e);return;
                 }finally{pool.shutdownNow();}
 
-                logger.event("REBUILD", "starting final rebuild translated-current.epub with done=" + done + "/" + total);\n                File finalDraft=new File(workspace,"translated-current.epub");
+                logger.event("REBUILD", "starting final rebuild translated-current.epub with done=" + done + "/" + total);
+                File finalDraft=new File(workspace,"translated-current.epub");
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
                 store.saveManifest(sourceHash,source.getName(),units.size(),done);
                 listener.onDone(output);
@@ -391,7 +392,9 @@ public final class TranslationJob {
         return out;
     }
 
-    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }\n\n    private static List<Unit> makeBatch(List<Unit> p,int start){
+    private static int batchChars(List<Unit> batch){ int n=0; for(Unit u:batch)n+=u.inner.length(); return n; }
+
+    private static List<Unit> makeBatch(List<Unit> p,int start){
         List<Unit> b=new ArrayList<>();int chars=0;
         for(int i=start;i<p.size()&&b.size()<MAX_BATCH_UNITS;i++){
             Unit u=p.get(i);int cost=u.inner.length()+180;
