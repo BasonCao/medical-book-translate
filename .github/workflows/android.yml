@@ -41,17 +41,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf "$RUNNER_TEMP/llama-nllb"
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama-nllb"
+          rm -rf "$RUNNER_TEMP/llama-nllb" "$RUNNER_TEMP/llama-nllb.tar.gz"
+          curl -L --fail --retry 3 "https://github.com/drizzt/llama.cpp/archive/a13959a.tar.gz" -o "$RUNNER_TEMP/llama-nllb.tar.gz"
+          mkdir -p "$RUNNER_TEMP/llama-nllb"
+          tar -xzf "$RUNNER_TEMP/llama-nllb.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/llama-nllb"
           cd "$RUNNER_TEMP/llama-nllb"
-          git fetch --depth 1 origin pull/18359/head:refs/remotes/origin/nllb-pr
-          git checkout --detach refs/remotes/origin/nllb-pr
 
           NDK="$ANDROID_HOME/ndk/27.2.12479018"
           cmake -S . -B build-android -G Ninja             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"             -DANDROID_ABI=arm64-v8a             -DANDROID_PLATFORM=android-26             -DANDROID_STL=c++_static             -DCMAKE_BUILD_TYPE=Release             -DCMAKE_CXX_STANDARD=17             -DGGML_OPENMP=OFF             -DGGML_NATIVE=OFF             -DLLAMA_CURL=OFF             -DLLAMA_BUILD_TESTS=OFF             -DLLAMA_BUILD_SERVER=OFF
 
-          cmake --build build-android --target nllb-simple --parallel 2
-          BIN="$RUNNER_TEMP/llama-nllb/build-android/bin/nllb-simple"
+          cmake --build build-android --target llama-nllb --parallel 2
+          BIN="$RUNNER_TEMP/llama-nllb/build-android/bin/llama-nllb"
           test -x "$BIN"
           file "$BIN"
           mkdir -p app/src/main/assets
