@@ -23,6 +23,36 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Android NDK for offline NLLB engine
+        uses: android-actions/setup-android@v4
+      - name: Build NLLB Android native engine
+        shell: bash
+        run: |
+          sdkmanager "ndk;29.0.14206865"
+          export ANDROID_NDK="$ANDROID_SDK_ROOT/ndk/29.0.14206865"
+          # Use the exact Acceldium NLLB implementation from PR #18359.
+          # Applying that old patch to today's upstream master is not valid because
+          # upstream has diverged substantially since the PR was authored.
+          git clone --depth 1 https://github.com/Acceldium/llama.cpp.git llama.cpp
+          test -f llama.cpp/examples/nllb-translation/nllb-simple.cpp
+          test -f llama.cpp/examples/nllb-translation/CMakeLists.txt
+          cmake -S llama.cpp -B llama-build \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF \
+            -DLLAMA_OPENSSL=OFF \
+            -DLLAMA_CURL=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_BUILD_TOOLS=ON \
+            -DLLAMA_BUILD_EXAMPLES=ON
+          cmake --build llama-build --config Release --target nllb-simple --parallel 2
+          test -f llama-build/bin/nllb-simple
+          mkdir -p app/src/main/assets
+          cp llama-build/bin/nllb-simple app/src/main/assets/nllb-simple
+          chmod 755 app/src/main/assets/nllb-simple
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
