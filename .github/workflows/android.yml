@@ -30,12 +30,12 @@ jobs:
         run: |
           sdkmanager "ndk;29.0.14206865"
           export ANDROID_NDK="$ANDROID_SDK_ROOT/ndk/29.0.14206865"
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
-          cd llama.cpp
-          curl -L --fail --retry 3 https://patch-diff.githubusercontent.com/raw/ggml-org/llama.cpp/pull/18359.patch -o nllb.patch
-          git apply --3way nllb.patch
-          test -f examples/nllb-translation/nllb-simple.cpp
-          cd ..
+          # Use the exact Acceldium NLLB implementation from PR #18359.
+          # Applying that old patch to today's upstream master is not valid because
+          # upstream has diverged substantially since the PR was authored.
+          git clone --depth 1 https://github.com/Acceldium/llama.cpp.git llama.cpp
+          test -f llama.cpp/examples/nllb-translation/nllb-simple.cpp
+          test -f llama.cpp/examples/nllb-translation/CMakeLists.txt
           cmake -S llama.cpp -B llama-build \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
