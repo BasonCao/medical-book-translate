@@ -66,7 +66,7 @@ jobs:
         run: |
           gradle --no-build-cache clean assembleDebug
           APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
-          ENGINE="app/src/main/jniLibs/arm64-v8a/libnllb-simple.so"
+          ENGINE="app/src/main/offline-engine/nllb-simple"
           test -n "$APK"
           test -s "$ENGINE"
           python3 tools/inject_offline_engine.py "$APK" "$ENGINE" app/build/outputs/apk/debug/app-debug-offline-unsigned.apk
@@ -75,7 +75,7 @@ jobs:
           "$BUILD_TOOLS/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android --out app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk
           FINAL="app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk"
           test -s "$FINAL"
-          unzip -l "$FINAL" | grep -q 'lib/arm64-v8a/libnllb-simple.so'
+          unzip -l "$FINAL" | grep -q 'assets/offline-engine/nllb-simple'
           "$BUILD_TOOLS/apksigner" verify --verbose "$FINAL"
           rm -f app/build/outputs/apk/debug/app-debug-offline-unsigned.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk app/build/outputs/apk/debug/app-debug.apk
 
