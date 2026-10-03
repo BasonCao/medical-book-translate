@@ -30,6 +30,9 @@ public final class OfflineModelManager {
             byte[] buf = new byte[1024 * 1024];
             int n;
             while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        } catch (IOException e) {
+            dst.delete();
+            return false;
         }
         if (!dst.setExecutable(true, true)) return false;
         return dst.isFile() && dst.length() > 10_000_000 && dst.canExecute();
