@@ -57,9 +57,10 @@ jobs:
           test -x "$BIN"
           file "$BIN"
           mkdir -p app/src/main/jniLibs/arm64-v8a
-          cp "$BIN" app/src/main/jniLibs/arm64-v8a/libnllb-simple.so
-          chmod 755 app/src/main/jniLibs/arm64-v8a/libnllb-simple.so
-          ls -lh app/src/main/jniLibs/arm64-v8a/libnllb-simple.so
+          mkdir -p app/src/main/offline-engine
+          cp "$BIN" app/src/main/offline-engine/nllb-simple
+          chmod 700 app/src/main/offline-engine/nllb-simple
+          ls -lh app/src/main/offline-engine/nllb-simple
 
       - name: Build Debug APK
         run: |
