@@ -57,7 +57,11 @@ jobs:
           s = p.read_text()
           s = s.replace("LLAMA_EXAMPLE_NLLB", "LLAMA_EXAMPLE_CLI")
           needle = "    auto            llama_init = common_init_from_params(params);"
-          inject = '    params.nllb_src_lang = "eng_Latn";\\n    params.nllb_tgt_lang = "vie_Latn";\\n    params.nllb_beam_size = 1;\\n\\n'
+          inject = """    params.nllb_src_lang = "eng_Latn";
+    params.nllb_tgt_lang = "vie_Latn";
+    params.nllb_beam_size = 1;
+
+"""
           if needle not in s:
               raise SystemExit("NLLB example patch marker not found")
           s = s.replace(needle, inject + needle, 1)
