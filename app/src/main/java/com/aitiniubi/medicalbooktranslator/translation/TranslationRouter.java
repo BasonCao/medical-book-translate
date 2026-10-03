@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Locale;
+import android.content.Context;
 
 /**
  * Provider failover for long-running book translation.
@@ -35,6 +36,23 @@ public final class TranslationRouter {
     private TranslationRouter() {}
 
     public static String translate(String source, String context, List<Provider> providers) throws Exception { return translate(source, context, providers, ACTIVE_LOGGER.get(), ACTIVE_STAGE.get()==null?"AI_CALL":ACTIVE_STAGE.get()); }
+
+    public static String translate(String source, String context, List<Provider> providers, Context androidContext) throws Exception {
+        if (providers == null || providers.isEmpty()) throw new IllegalArgumentException("Chưa cấu hình AI provider nào.");
+        List<String> failures = new ArrayList<>();
+        for (Provider p : providers) {
+            if (p == null || p.config == null || isBlank(p.config.endpoint) || isBlank(p.config.model)) continue;
+            if (p.config.endpoint.startsWith("offline://nllb")) {
+                try { return OfflineNllbTranslator.translateBatchPrompt(androidContext, source, p.config.model); }
+                catch (Exception e) { failures.add(p.name + ": " + (e.getMessage()==null?e.toString():e.getMessage())); continue; }
+            }
+            if (isBlank(p.config.apiKey)) continue;
+            try { return OpenAICompatibleTranslator.translate(source, context, p.config); }
+            catch (Exception e) { failures.add(p.name + ": " + (e.getMessage()==null?e.toString():e.getMessage())); }
+        }
+        throw new IOException("Tất cả provider đã cấu hình đều thất bại." + (failures.isEmpty()?"":"\n\nChi tiết:\n• "+String.join("\n• ",failures)));
+    }
+
 
     public static String translate(String source, String context, List<Provider> providers, TranslationLogger logger, String stage) throws Exception {
         if (providers == null || providers.isEmpty()) {
