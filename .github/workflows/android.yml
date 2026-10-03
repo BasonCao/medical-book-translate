@@ -49,7 +49,7 @@ jobs:
           # The NLLB PR contains examples/nllb-translation, but its CMake target
           # is not registered by the current top-level build. Create a small
           # wrapper project that links the NLLB example against the llama library.
-          cat > nllb-wrapper.CMakeLists.txt <<'EOF'
+          cat > CMakeLists.txt <<'EOF'
           cmake_minimum_required(VERSION 3.18)
           project(nllb_android LANGUAGES C CXX)
           add_subdirectory(llama.cpp llama)
@@ -58,7 +58,7 @@ jobs:
           target_include_directories(nllb-simple PRIVATE llama.cpp/include llama.cpp/src)
           set_target_properties(nllb-simple PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
           EOF
-          cmake -S . -B nllb-build -C /dev/null \
+          cmake -S . -B nllb-build \
             -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-28 \
@@ -69,7 +69,6 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DLLAMA_BUILD_TOOLS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=nllb-wrapper.CMakeLists.txt
           cmake --build nllb-build --config Release --target nllb-simple -j 2
           test -f nllb-build/bin/nllb-simple
           mkdir -p app/src/main/assets
