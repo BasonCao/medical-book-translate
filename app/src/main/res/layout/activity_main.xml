@@ -6,6 +6,7 @@
 <Button android:id="@+id/analyzeButton" android:text="Phân tích EPUB / PDF" android:enabled="false" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <Button android:id="@+id/glossaryButton" android:text="📚 Thuật ngữ chuyên ngành (CSV)" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <Button android:id="@+id/translateButton" android:text="🤖 Dịch / Tiếp tục" android:enabled="false" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+<Button android:id="@+id/offlineButton" android:text="🧠 Cài model DỊCH OFFLINE — NLLB 600M" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <Button android:id="@+id/pdfLayoutButton" android:text="📐 Bố cục PDF: 2 cột như PDF gốc" android:visibility="gone" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <Button android:id="@+id/pdfOneColumnButton" android:text="📄 DỊCH PDF — BỐ CỤC 1 CỘT" android:visibility="gone" android:layout_marginTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
 <Button android:id="@+id/pdfKeepLayoutButton" android:text="📰 DỊCH PDF — GIỮ NGUYÊN BỐ CỤC 2 CỘT" android:visibility="gone" android:layout_marginTop="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
