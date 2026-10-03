@@ -72,6 +72,8 @@ jobs:
           python3 tools/inject_offline_engine.py "$APK" "$ENGINE" app/build/outputs/apk/debug/app-debug-offline-unsigned.apk
           unzip -l app/build/outputs/apk/debug/app-debug-offline-unsigned.apk | grep -F 'assets/offline-engine/nllb-simple'
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
           "$BUILD_TOOLS/zipalign" -f 4 app/build/outputs/apk/debug/app-debug-offline-unsigned.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk
           "$BUILD_TOOLS/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android --out app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk
           FINAL="app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk"
