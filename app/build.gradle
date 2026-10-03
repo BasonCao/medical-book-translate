@@ -31,6 +31,12 @@ android {
         }
     }
 
+    sourceSets {
+        main {
+            assets.srcDir file('src/main/offline-engine')
+        }
+    }
+
     buildTypes {
         release {
             if (hasStableSigning) {
