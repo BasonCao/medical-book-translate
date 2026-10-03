@@ -1,5 +1,7 @@
 package com.aitiniubi.medicalbooktranslator.translation;
 
+import android.content.Context;
+
 import com.aitiniubi.medicalbooktranslator.epub.EpubBuilder;
 import org.json.*;
 import java.io.*;
@@ -31,7 +33,7 @@ public final class TranslationJob {
 
     private TranslationJob(){}
 
-    public static void run(File source,File output,File workspace,
+    public static void run(Context androidContext,File source,File output,File workspace,
                            List<TranslationRouter.Provider> providers,Listener listener){
         new Thread(()->{
             try{
@@ -235,7 +237,7 @@ public final class TranslationJob {
                   .append("Correct that problem in the new output.\n\n")
                   .append(protectedSource);
 
-            String raw=TranslationRouter.translate(prompt.toString(),context,providers);
+            String raw=TranslationRouter.translate(prompt.toString(),context,providers,androidContext);
             try{
                 String restored=restoreMarkup(raw,marks);
                 t=clean(restored);
@@ -280,7 +282,7 @@ public final class TranslationJob {
                 +"Never return an empty answer. Do not explain anything. "
                 +"Keep every placeholder __MBT_MARKUP_000__ exactly unchanged and in the same position. "
                 +"Preserve numbers, units, abbreviations and citations. Return only the translation.\n\n"+src;
-        String response=TranslationRouter.translate(prompt,context,providers);
+        String response=TranslationRouter.translate(prompt,context,providers,androidContext);
         return clean(restoreMarkup(response,marks));
     }
 
@@ -303,7 +305,7 @@ public final class TranslationJob {
             prompt.append(i+1).append(". ").append(sentences.get(i)).append("\\n");
         }
 
-        String response=TranslationRouter.translate(prompt.toString(),context,providers).trim();
+        String response=TranslationRouter.translate(prompt.toString(),context,providers,androidContext).trim();
         int a=response.indexOf('['),b=response.lastIndexOf(']');
         if(a<0||b<=a)throw new IOException("Fallback từng câu không trả về JSON.");
         JSONArray arr=new JSONArray(response.substring(a,b+1));
@@ -439,7 +441,7 @@ public final class TranslationJob {
             String protectedSource=protectMarkup(u.inner,marks);
             s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}\n");
         }
-        String response=TranslationRouter.translate(s.toString(),context,providers).trim();
+        String response=TranslationRouter.translate(s.toString(),context,providers,androidContext).trim();
         String fence=String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96);
         if(response.startsWith(fence))response=response.replaceFirst("^"+fence+"(?:json)?\\s*","").replaceFirst("\\s*"+fence+"$","");
         int a=response.indexOf('['),b=response.lastIndexOf(']');
