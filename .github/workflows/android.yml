@@ -31,19 +31,39 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug
 
-      - name: Prepare stable signing
+      - name: Prepare and verify stable signing
         id: signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         shell: bash
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Stable signing secrets are not configured; release APK will not be built."
-            exit 0
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] || [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo "::error::Stable signing is mandatory. All four Android signing secrets must be configured."
+            exit 1
           fi
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/medical-book-translator-release.jks"
-          test -s "$RUNNER_TEMP/medical-book-translator-release.jks"
+
+          KEYSTORE="$RUNNER_TEMP/medical-book-translator-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+
+          EXPECTED_CERT_SHA256="BAAC5E5380BA5F9B5CB1E2817662CCD576C5F34035C1C11473365539CC0B10F4"
+          ACTUAL_CERT_SHA256="$(keytool -list -v -keystore "$KEYSTORE" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | awk -F': ' '/SHA256:/{gsub(":", "", $2); print toupper($2); exit}')"
+
+          if [ -z "$ACTUAL_CERT_SHA256" ]; then
+            echo "::error::Could not read the release signing certificate."
+            exit 1
+          fi
+
+          if [ "$ACTUAL_CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::Wrong signing keystore/certificate. Refusing to build a release APK."
+            exit 1
+          fi
+
+          echo "Stable signing certificate verified."
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
       - name: Build Stable Release APK
@@ -54,6 +74,19 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle assembleRelease
+
+      - name: Verify stable release APK
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          EXPECTED_CERT_SHA256="BAAC5E5380BA5F9B5CB1E2817662CCD576C5F34035C1C11473365539CC0B10F4"
+          ACTUAL_APK_CERT_SHA256="$(apksigner verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{gsub(":", "", $2); print toupper($2); exit}')"
+          test -n "$ACTUAL_APK_CERT_SHA256"
+          test "$ACTUAL_APK_CERT_SHA256" = "$EXPECTED_CERT_SHA256"
+          sha256sum "$APK"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
