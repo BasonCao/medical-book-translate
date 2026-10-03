@@ -9,19 +9,30 @@ import okhttp3.Response;
 /** Manages the optional on-device NLLB-200 distilled 600M Q4_0 model. */
 public final class OfflineModelManager {
     public static final String MODEL_FILE = "nllb-600m-Q4_0.gguf";
-    public static final String BINARY_FILE = "libnllb-simple.so";
+    public static final String BINARY_FILE = "nllb-simple";
     public static final String MODEL_URL = "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf";
     private static final long MIN_MODEL_BYTES = 450L * 1024L * 1024L;
     private OfflineModelManager() {}
     public interface Progress { void onProgress(long done, long total); }
     public static File root(Context c) { return new File(c.getFilesDir(), "offline-model"); }
     public static File model(Context c) { return new File(root(c), MODEL_FILE); }
-    public static File binary(Context c) { return new File(c.getApplicationInfo().nativeLibraryDir, BINARY_FILE); }
+    public static File binary(Context c) { return new File(root(c), BINARY_FILE); }
+    private static final String BINARY_ASSET = "offline-engine/nllb-simple";
     public static boolean isModelReady(Context c) { File f=model(c); return f.isFile() && f.length()>=MIN_MODEL_BYTES; }
     public static boolean isReady(Context c) { return isModelReady(c) && ensureBinary(c); }
     public static boolean ensureBinary(Context c) {
         File dst = binary(c);
-        return dst.isFile() && dst.length() > 100_000 && dst.canExecute();
+        if (dst.isFile() && dst.length() > 10_000_000 && dst.canExecute()) return true;
+        File dir = root(c);
+        if (!dir.exists() && !dir.mkdirs()) return false;
+        try (InputStream in = c.getAssets().open(BINARY_ASSET);
+             OutputStream out = new BufferedOutputStream(new FileOutputStream(dst))) {
+            byte[] buf = new byte[1024 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+        if (!dst.setExecutable(true, true)) return false;
+        return dst.isFile() && dst.length() > 10_000_000 && dst.canExecute();
     }
 
     public static void downloadModel(Context c, Progress progress) throws Exception {
