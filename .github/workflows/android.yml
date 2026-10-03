@@ -31,6 +31,13 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug
 
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: medical-book-translator-debug-v1.12.1-fixed
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
       - name: Prepare and verify stable signing
         id: signing
         env:
@@ -88,12 +95,6 @@ jobs:
           test "$ACTUAL_APK_CERT_SHA256" = "$EXPECTED_CERT_SHA256"
           sha256sum "$APK"
 
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: medical-book-translator-debug-v1.12.1
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
 
       - name: Upload Stable Release APK
         if: steps.signing.outputs.enabled == 'true'
