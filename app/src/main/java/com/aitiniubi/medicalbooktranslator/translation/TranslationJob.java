@@ -293,7 +293,7 @@ public final class TranslationJob {
         String src=protectMarkup(u.inner,marks);
         List<String> sentences=splitSentences(src);
         if(sentences.isEmpty()) return "";
-        if(sentences.size()==1) return translateDirect(u,context,providers);
+        if(sentences.size()==1) return translateDirect(androidContext,u,context,providers);
 
         StringBuilder prompt=new StringBuilder();
         prompt.append("Translate EVERY sentence below into professional Vietnamese. ")
