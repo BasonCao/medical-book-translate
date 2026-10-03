@@ -31,9 +31,41 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug
 
+      - name: Prepare stable signing
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Stable signing secrets are not configured; release APK will not be built."
+            exit 0
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/medical-book-translator-release.jks"
+          test -s "$RUNNER_TEMP/medical-book-translator-release.jks"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build Stable Release APK
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/medical-book-translator-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle assembleRelease
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: medical-book-translator-debug
+          name: medical-book-translator-debug-v1.12.1
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload Stable Release APK
+        if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: medical-book-translator-stable-v1.12.1
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
