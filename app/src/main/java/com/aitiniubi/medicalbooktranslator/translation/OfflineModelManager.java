@@ -1,6 +1,7 @@
 package com.aitiniubi.medicalbooktranslator.translation;
 
 import android.content.Context;
+import android.os.Build;
 import java.io.*;
 import java.security.MessageDigest;
 import java.util.Locale;
@@ -51,7 +52,26 @@ public final class OfflineModelManager {
     }
 
     public static File binary(Context c) {
-        return new File(root(c), BINARY_FILE);
+        return new File(c.getApplicationInfo().nativeLibraryDir, "libnllb.so");
+    }
+
+    public static boolean isArm64Supported() {
+        if (Build.VERSION.SDK_INT < 21) return false;
+        for (String abi : Build.SUPPORTED_ABIS) {
+            if ("arm64-v8a".equalsIgnoreCase(abi)) return true;
+        }
+        return false;
+    }
+
+    public static String readinessError(Context c) {
+        if (!isArm64Supported()) {
+            return "Thiết bị không hỗ trợ ARM64 (arm64-v8a). Dịch OFFLINE NLLB hiện chỉ hỗ trợ ARM64.";
+        }
+        if (!isModelReady(c)) return "Model NLLB-600M chưa được cài đặt.";
+        File f = binary(c);
+        if (!f.isFile()) return "Không tìm thấy engine NLLB trong APK: " + f.getAbsolutePath();
+        if (!f.canExecute()) return "Android không cho phép thực thi engine NLLB: " + f.getAbsolutePath();
+        return "";
     }
 
     public static boolean isModelReady(Context c) {
@@ -65,28 +85,13 @@ public final class OfflineModelManager {
     }
 
     public static boolean isReady(Context c) {
-        return isModelReady(c) && ensureBinary(c);
+        return readinessError(c).isEmpty();
     }
 
     public static boolean ensureBinary(Context c) {
-        File dst = binary(c);
-        if (dst.isFile() && dst.length() > 10_000_000 && dst.canExecute()) return true;
-
-        File dir = root(c);
-        if (!dir.exists() && !dir.mkdirs()) return false;
-
-        try (InputStream in = c.getAssets().open(BINARY_ASSET);
-             OutputStream out = new BufferedOutputStream(new FileOutputStream(dst))) {
-            byte[] buf = new byte[1024 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-        } catch (IOException e) {
-            dst.delete();
-            return false;
-        }
-
-        if (!dst.setExecutable(true, true)) return false;
-        return dst.isFile() && dst.length() > 10_000_000 && dst.canExecute();
+        if (!isArm64Supported()) return false;
+        File f = binary(c);
+        return f.isFile() && f.length() > 0 && f.canExecute();
     }
 
     /**
