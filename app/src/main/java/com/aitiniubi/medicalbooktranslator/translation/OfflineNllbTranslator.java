@@ -89,10 +89,10 @@ public final class OfflineNllbTranslator {
             StringBuilder out=new StringBuilder();
             for(int i=0;i<ids.size();i++){
                 int end=i+1<starts.size()?mmStartForNext(marker,prompt,starts.get(i)):prompt.length();
-                String source=normalizePdfUnit(prompt.substring(starts.get(i),end));
-                String translated=source;
-                if(hasTranslatablePdfText(source))
-                    translated=translateTextFragment(context,source);
+                String rawSource=prompt.substring(starts.get(i),end).trim();
+                String source=normalizePdfUnit(rawSource);
+                String translated=hasTranslatablePdfText(source)
+                        ? translateTextFragment(context,source) : rawSource;
                 if(i>0)out.append("\n");
                 out.append("[[[UNIT_").append(ids.get(i)).append("]]]\n").append(translated);
             }
@@ -164,7 +164,7 @@ public final class OfflineNllbTranslator {
 
     private static String normalizePdfUnit(String source){
         if(source==null)return "";
-        String x=source.replace("\\\\n","\n").replace("\r\n","\n").replace("\r","\n").trim();
+        String x=source.replace("\\n","\n").replace("\\\\n","\n").replace("\r\n","\n").replace("\r","\n").trim();
         x=x.replaceAll("[ \\t]*\\n[ \\t]*"," ");
         x=x.replaceAll("\\s+"," ").trim();
         return x;
