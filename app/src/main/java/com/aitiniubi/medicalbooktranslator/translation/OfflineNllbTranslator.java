@@ -10,7 +10,7 @@ import java.util.regex.*;
 
 /** Executes the bundled ARM64 nllb-simple binary completely on-device. */
 public final class OfflineNllbTranslator {
-    private static final Pattern MARKUP=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
+    private static final Pattern MARKUP=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);|__MBT_MARKUP_\\d+__",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
     private static final Pattern LETTER=Pattern.compile(".*\\p{L}.*",Pattern.DOTALL);
     private static final Object ENGINE_LOCK=new Object();
     private OfflineNllbTranslator(){}
@@ -53,7 +53,7 @@ public final class OfflineNllbTranslator {
             return out.toString();
         }
 
-        // Single-item fallback: accept {"id":"...","source":"..."}.
+        // NLLB is a translation model, not an instruction-following chat model.\n        // Direct/recovery prompts must translate only the final source fragment.\n        int split=prompt.lastIndexOf("\\n\\n");\n        if(split>=0&&split+2<prompt.length()){\n            String candidate=prompt.substring(split+2).trim();\n            if(!candidate.isEmpty()&&LETTER.matcher(candidate).matches()){\n                String translated=translatePreservingMarkup(context,candidate,OfflineModelManager.model(context));\n                if(!translated.trim().isEmpty())return translated;\n            }\n        }\n\n        // Single-item fallback: accept {"id":"...","source":"..."}.
         try{
             JSONObject item=new JSONObject(prompt.trim());
             String id=item.optString("id","");
