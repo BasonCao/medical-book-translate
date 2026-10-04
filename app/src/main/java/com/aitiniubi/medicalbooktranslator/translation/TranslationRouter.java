@@ -25,10 +25,12 @@ public final class TranslationRouter {
     private static final Map<String,Long> DISABLED_UNTIL = new ConcurrentHashMap<>();
     private static final ThreadLocal<TranslationLogger> ACTIVE_LOGGER = new ThreadLocal<>();
     private static final ThreadLocal<String> ACTIVE_STAGE = new ThreadLocal<>();
+    private static final ThreadLocal<Context> ACTIVE_CONTEXT = new ThreadLocal<>();
 
     public static void setDiagnostics(TranslationLogger logger, String stage) { ACTIVE_LOGGER.set(logger); ACTIVE_STAGE.set(stage); }
     public static void setStage(String stage) { ACTIVE_STAGE.set(stage); }
-    public static void clearDiagnostics() { ACTIVE_LOGGER.remove(); ACTIVE_STAGE.remove(); }
+    public static void clearDiagnostics() { ACTIVE_LOGGER.remove(); ACTIVE_STAGE.remove(); ACTIVE_CONTEXT.remove(); }
+    public static void setAndroidContext(Context context) { ACTIVE_CONTEXT.set(context); }
     private static final long DAILY_QUOTA_COOLDOWN_MS = 24L * 60L * 60L * 1000L;
     private static final long RATE_LIMIT_COOLDOWN_MS = 60L * 1000L;
     private static final long TEMPORARY_QUOTA_COOLDOWN_MS = 15L * 60L * 1000L;
@@ -61,14 +63,22 @@ public final class TranslationRouter {
 
         List<String> failures = new ArrayList<>();
         for (Provider p : providers) {
-            if (p == null || p.config == null || isBlank(p.config.endpoint) || isBlank(p.config.model) || isBlank(p.config.apiKey)) {
+            if (p == null || p.config == null || isBlank(p.config.endpoint) || isBlank(p.config.model)) {
                 continue;
             }
+            final boolean offline = p.config.endpoint.startsWith("offline://nllb");
+            if (!offline && isBlank(p.config.apiKey)) continue;
             long disabledUntil = DISABLED_UNTIL.getOrDefault(p.name, 0L);
             if (disabledUntil > System.currentTimeMillis()) {
                 continue;
             }
             try {
+                if (offline) {
+                    if (logger != null) logger.event(stage, "OFFLINE_NLLB_CALL model=" + p.config.model);
+                    String out = OfflineNllbTranslator.translateBatchPrompt(androidContextOrNull(), source, p.config.model);
+                    if (logger != null) logger.event(stage, "OFFLINE_NLLB_OK chars=" + (out == null ? 0 : out.length()));
+                    return out;
+                }
                 return OpenAICompatibleTranslator.translate(source, context, p.config);
             } catch (Exception e) {
                 String message = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -88,6 +98,15 @@ public final class TranslationRouter {
             for (String failure : failures) out.append("\n• ").append(failure);
         }
         throw new IOException(out.toString());
+    }
+
+    private static Context androidContextOrNull() {
+        // The logger-based overload historically did not carry Android Context,
+        // which silently bypassed the offline provider. Recover it from the
+        // TranslationJob binding when available.
+        Context c = ACTIVE_CONTEXT.get();
+        if (c == null) throw new IllegalStateException("Offline NLLB cần Android Context.");
+        return c;
     }
 
     public static boolean isQuotaOrRateLimit(String message) {
