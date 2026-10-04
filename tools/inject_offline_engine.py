@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import tempfile
 import zipfile
+import shutil
 
 SIGNATURE_SUFFIXES = (".RSA", ".DSA", ".EC", ".SF")
 
@@ -56,15 +57,15 @@ def main():
             out_info.compress_type = zipfile.ZIP_STORED
             out_info.external_attr = 0o100755 << 16
             out_info.create_system = 3
-            with engine.open("rb") as f:
-                zout.writestr(out_info, f.read())
+            with engine.open("rb") as f, zout.open(out_info, "w") as out:
+                shutil.copyfileobj(f, out, length=1024 * 1024)
 
             model_info = zipfile.ZipInfo(model_arc)
             model_info.compress_type = zipfile.ZIP_STORED
             model_info.external_attr = 0
             model_info.create_system = 3
-            with model.open("rb") as f:
-                zout.writestr(model_info, f.read())
+            with model.open("rb") as f, zout.open(model_info, "w") as out:
+                shutil.copyfileobj(f, out, length=1024 * 1024)
 
         dst.parent.mkdir(parents=True, exist_ok=True)
         tmp_path.replace(dst)
