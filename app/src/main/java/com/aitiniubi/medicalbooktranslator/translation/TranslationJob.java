@@ -74,7 +74,10 @@ public final class TranslationJob {
                 }
 
                 final List<GlossaryManager.Term> glossary=GlossaryManager.load(workspace);
-                final int parallelism=3;
+                final boolean hasOfflineProvider=providers.stream().anyMatch(p -> p != null && p.config != null && p.config.endpoint != null && p.config.endpoint.startsWith("offline://nllb"));
+                // NLLB-600M is a ~495 MB encoder/decoder model. Serialize offline work
+                // because concurrent native processes can exceed Android memory limits.
+                final int parallelism=hasOfflineProvider?1:3;
                 java.util.concurrent.ExecutorService pool=java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<BatchResult> completion=new java.util.concurrent.ExecutorCompletionService<>(pool);
                 int next=0,submitted=0,completedBatches=0;
