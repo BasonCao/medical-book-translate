@@ -34,7 +34,7 @@ public final class OfflineNllbTranslator {
         }
 
         // PDF path: pages are sent as stable [[[UNIT_n]]] markers rather than JSON.
-        Pattern marker=Pattern.compile("\\\[\\\\[\\\\[UNIT_(\\\\d+)\\\\]\\\\]\\\\]\\\\s*",
+        Pattern marker=Pattern.compile("\\\\[\\\\[\\\\[UNIT_(\\\\d+)\\\\]\\\\]\\\\]\\\\s*",
                 Pattern.CASE_INSENSITIVE);
         Matcher mm=marker.matcher(prompt);
         List<Integer> ids=new ArrayList<>();
