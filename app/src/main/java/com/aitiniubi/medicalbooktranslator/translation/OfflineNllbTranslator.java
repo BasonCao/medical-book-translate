@@ -64,26 +64,30 @@ public final class OfflineNllbTranslator {
             }
         }catch(Exception ignored){}
 
-        throw new IOException("Offline NLLB nhận batch không hợp lệ: không tìm thấy JSON items hoặc UNIT marker    private static List<JSONObject> findJsonObjects(String prompt){
+        throw new IOException("Offline NLLB nhận batch không hợp lệ: không tìm thấy JSON items hoặc UNIT markers.");
+    }
+
+    private static List<JSONObject> findJsonObjects(String prompt){
         List<JSONObject> out=new ArrayList<>();
         if(prompt==null)return out;
-        // Fast path: each batch item is a complete JSON object on its own line.
+
+        // Normal EPUB batch: one JSON object per line after the instruction text.
         String[] lines=prompt.split("\\R");
         for(String line:lines){
-            String s=line.trim();
-            if(s.isEmpty())continue;
-            int start=s.indexOf('{'), end=s.lastIndexOf('}');
+            String x=line.trim();
+            if(x.isEmpty())continue;
+            int start=x.indexOf('{'),end=x.lastIndexOf('}');
             if(start>=0&&end>start){
                 try{
-                    JSONObject o=new JSONObject(s.substring(start,end+1));
+                    JSONObject o=new JSONObject(x.substring(start,end+1));
                     if(o.has("id")&&o.has("source"))out.add(o);
                 }catch(Exception ignored){}
             }
         }
         if(!out.isEmpty())return out;
 
-        // Embedded single-object recovery prompt. Find balanced JSON braces
-        // while respecting quoted strings and escaped characters.
+        // Direct/recovery request: locate an embedded JSON object while
+        // respecting quoted strings and escaped quotes.
         int depth=0,start=-1;boolean quoted=false,escaped=false;
         for(int i=0;i<prompt.length();i++){
             char ch=prompt.charAt(i);
@@ -109,9 +113,6 @@ public final class OfflineNllbTranslator {
             }
         }
         return out;
-    }
-
-null;
     }
 
     private static int mmStartForNext(Pattern marker,String prompt,int after){
