@@ -98,8 +98,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] || [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
-            echo "::error::Stable signing is mandatory. All four Android signing secrets must be configured."
-            exit 1
+            echo "::warning::Stable signing secrets are not configured. Debug APK will still be built and uploaded; stable release is skipped."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           KEYSTORE="$RUNNER_TEMP/medical-book-translator-release.jks"
