@@ -134,6 +134,7 @@ public final class PdfTranslationJob {
                         }catch(java.util.concurrent.ExecutionException pageFailure){
                             Throwable cause=pageFailure.getCause();
                             Exception ex=cause instanceof Exception?(Exception)cause:new IOException("Lỗi dịch trang "+n, cause);
+                            if(hasOfflineProvider && OfflineNllbTranslator.isEngineError(ex)) throw ex;
                             int failedPage=extractPageNumber(ex.getMessage());
                             if(failedPage<=0)failedPage=findUnfinishedPage(pageUnits,state,total);
                             if(failedPage<=0)failedPage=n+1;
