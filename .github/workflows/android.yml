@@ -86,6 +86,21 @@ jobs:
           test "$(stat -c%s "$MODEL")" -ge 471859200
           ls -lh "$MODEL"
 
+      - name: Download and verify NLLB model
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODEL_DIR="$GITHUB_WORKSPACE/app/src/main/assets/offline-model"
+          MODEL="$MODEL_DIR/nllb-600m-Q4_0.gguf"
+          mkdir -p "$MODEL_DIR"
+          rm -f "$MODEL"
+          URL="https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf"
+          curl -L --fail --retry 5 --retry-delay 5 --retry-all-errors             -A "MedBook-Dich-AI/1.13.0-GitHubActions"             "$URL" -o "$MODEL"
+          SIZE="$(stat -c%s "$MODEL")"
+          echo "Downloaded NLLB model: $SIZE bytes"
+          test "$SIZE" -ge 471859200
+          ls -lh "$MODEL"
+
       - name: Build Debug APK
         shell: bash
         run: |
@@ -93,9 +108,9 @@ jobs:
           gradle --no-build-cache clean assembleDebug
           APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           ENGINE="$RUNNER_TEMP/nllb-simple"
+          MODEL="$GITHUB_WORKSPACE/app/src/main/assets/offline-model/nllb-600m-Q4_0.gguf"
           test -s "$APK"
           test -s "$ENGINE"
-          MODEL="$GITHUB_WORKSPACE/app/src/main/assets/offline-model/nllb-600m-Q4_0.gguf"
           test -s "$MODEL"
           python3 tools/inject_offline_engine.py "$APK" "$ENGINE" "$MODEL" app/build/outputs/apk/debug/app-debug-offline-unsigned.apk
           unzip -l app/build/outputs/apk/debug/app-debug-offline-unsigned.apk | grep -F 'assets/offline-engine/nllb-simple'
