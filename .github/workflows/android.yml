@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          MODEL_DIR="$GITHUB_WORKSPACE/app/src/main/assets/offline-model"
+          MODEL_DIR="$RUNNER_TEMP/offline-model"
           MODEL="$MODEL_DIR/nllb-600m-Q4_0.gguf"
           TMP="$RUNNER_TEMP/nllb-600m.gguf.part"
           mkdir -p "$MODEL_DIR"
@@ -88,7 +88,7 @@ jobs:
           gradle --no-build-cache clean assembleDebug
           APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           ENGINE="$RUNNER_TEMP/nllb-simple"
-          MODEL="$GITHUB_WORKSPACE/app/src/main/assets/offline-model/nllb-600m-Q4_0.gguf"
+          MODEL="$RUNNER_TEMP/offline-model/nllb-600m-Q4_0.gguf"
           test -s "$APK"
           test -s "$ENGINE"
           test -s "$MODEL"
