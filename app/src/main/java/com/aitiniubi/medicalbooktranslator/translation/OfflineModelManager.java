@@ -5,6 +5,11 @@ import java.io.*;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import okhttp3.HttpUrl;
+import okhttp3.dnsoverhttps.DnsOverHttps;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.concurrent.TimeUnit;
 
 /** Manages the optional on-device NLLB-200 distilled 600M Q4_0 model. */
 public final class OfflineModelManager {
@@ -42,7 +47,9 @@ public final class OfflineModelManager {
     public static void downloadModel(Context c, Progress progress) throws Exception {
         File dir=root(c); if(!dir.exists()&&!dir.mkdirs()) throw new IOException("Không tạo được thư mục model offline.");
         File tmp=new File(dir,MODEL_FILE+".part"), dst=model(c);
-        OkHttpClient client=new OkHttpClient.Builder().followRedirects(true).followSslRedirects(true).build();
+        OkHttpClient bootstrap=new OkHttpClient.Builder().connectTimeout(30,TimeUnit.SECONDS).readTimeout(180,TimeUnit.SECONDS).writeTimeout(180,TimeUnit.SECONDS).retryOnConnectionFailure(true).build();
+        DnsOverHttps doh=new DnsOverHttps.Builder().client(bootstrap).url(HttpUrl.parse("https://cloudflare-dns.com/dns-query")).bootstrapDnsHosts(ip("1.1.1.1"),ip("1.0.0.1"),ip("2606:4700:4700::1111"),ip("2606:4700:4700::1001")).includeIPv6(true).build();
+        OkHttpClient client=bootstrap.newBuilder().dns(doh).followRedirects(true).followSslRedirects(true).build();
         IOException last=null;
         String[] urls=new String[]{MODEL_URL,MODEL_URL_FALLBACK};
         for(String url:urls){
@@ -67,4 +74,5 @@ public final class OfflineModelManager {
         if(dst.exists()&&!dst.delete())throw new IOException("Không thay thế được model cũ.");
         if(!tmp.renameTo(dst))throw new IOException("Không thể hoàn tất cài model offline.");
     }
+    private static InetAddress ip(String value){ try{return InetAddress.getByName(value);}catch(UnknownHostException e){throw new IllegalStateException("Invalid DNS bootstrap address: "+value,e);} }
 }
