@@ -793,7 +793,7 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this)
             .setTitle("Dịch offline NLLB-200 600M")
-            .setMessage("Model Q4_0 khoảng 495 MB. APK không chứa model nên file cài đặt vẫn nhẹ. Sau khi tải xong, dịch có thể chạy không cần Internet/API key.\n\nNếu Hugging Face trả HTTP 401/403, bạn có thể tải file bằng Chrome rồi chọn "Nhập model"; app vẫn kiểm tra kích thước và giữ model trong bộ nhớ riêng.")
+            .setMessage("Model Q4_0 khoảng 495 MB. APK không chứa model nên file cài đặt vẫn nhẹ. Sau khi tải xong, dịch có thể chạy không cần Internet/API key.\n\nNếu Hugging Face trả HTTP 401/403, bạn có thể tải file bằng Chrome rồi chọn \\"Nhập model\\"; app vẫn kiểm tra kích thước và giữ model trong bộ nhớ riêng.")
             .setNegativeButton("Hủy",null)
             .setNeutralButton("Nhập model", (d,w)->pickOfflineModel())
             .setPositiveButton("Tải model", (d,w)->downloadOfflineModel())
