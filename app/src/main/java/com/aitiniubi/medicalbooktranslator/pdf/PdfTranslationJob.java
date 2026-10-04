@@ -27,6 +27,8 @@ import com.tom_roush.pdfbox.text.PDFTextStripper;
 import com.tom_roush.pdfbox.util.Matrix;
 import java.io.*;
 import java.util.*;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public final class PdfTranslationJob {
     public interface Listener {
@@ -104,11 +106,7 @@ public final class PdfTranslationJob {
                             prompt.append("[[[UNIT_").append(i).append("]]]\\n")
                                   .append(units.get(i).source).append("\\n");
                         }
-                        String translated=TranslationRouter.translate(prompt.toString(),
-                                "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers,context);
-                        if(translated==null||translated.trim().isEmpty())
-                            throw new IOException("AI trả về bản dịch rỗng ở trang "+pageNo);
-                        String normalized=parseUnitResponse(translated,units.size(),pageNo);
+                        String normalized=translatePageWithRecovery(context,units,pageNo,providers,prompt.toString());
                         return new PageResult(pageNo,normalized);
                     });
                     submitted++;
@@ -1354,6 +1352,83 @@ public final class PdfTranslationJob {
     private static final class LayoutUnit{
         String source;final float x,y;float width,height,fontSize;final int column;float bottom;
         LayoutUnit(String s,float x,float y,float w,float h,float fs,int c){source=s;this.x=x;this.y=y;width=w;height=h;fontSize=fs>0?fs:10f;column=c;bottom=y+h;}
+    }
+
+    private static String translatePageWithRecovery(Context context,List<LayoutUnit> units,int page,List<TranslationRouter.Provider> providers,String markerPrompt)throws Exception{
+        Exception first=null;
+        try{
+            String raw=TranslationRouter.translate(markerPrompt,
+                    "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers,context);
+            if(raw==null||raw.trim().isEmpty())throw new IOException("AI trả về bản dịch rỗng ở trang "+page);
+            return parseUnitResponse(raw,units.size(),page);
+        }catch(Exception e){first=e;}
+
+        // Recovery pass: JSON is much harder for an AI model to accidentally
+        // drop/rename than custom UNIT markers. It also matches the offline NLLB
+        // adapter, which natively accepts {id,source} JSON.
+        Map<Integer,String> recovered=new HashMap<>();
+        StringBuilder jp=new StringBuilder("Return ONLY a JSON array. Each object must contain exactly id and translation. Keep every id unchanged. Translate every source completely into professional Vietnamese. Do not omit, merge, summarize, or reorder any item. Preserve numbers, units, abbreviations and citations.\\n");
+        for(int i=0;i<units.size();i++){
+            JSONObject o=new JSONObject();
+            o.put("id",String.valueOf(i));
+            o.put("source",units.get(i).source);
+            jp.append(o.toString()).append("\\n");
+        }
+        try{
+            String raw=TranslationRouter.translate(jp.toString(),
+                    "Medical obstetric ultrasound / fetal medicine textbook. Preserve all medical information.",providers,context);
+            parseJsonUnitResponse(raw,units.size(),recovered);
+        }catch(Exception e){
+            first=e;
+        }
+
+        // Last recovery: translate missing units one at a time. This prevents one
+        // malformed response from discarding an otherwise usable page.
+        for(int i=0;i<units.size();i++){
+            if(recovered.containsKey(i))continue;
+            try{
+                JSONObject o=new JSONObject();
+                o.put("id","0");
+                o.put("source",units.get(i).source);
+                String prompt="Return ONLY a JSON array with one object containing id and translation. Translate the complete source into professional Vietnamese. Keep id exactly 0. Preserve numbers, units, abbreviations and citations.\\n"+o.toString();
+                String raw=TranslationRouter.translate(prompt,
+                        "Medical obstetric ultrasound / fetal medicine textbook.",providers,context);
+                Map<Integer,String> one=new HashMap<>();
+                parseJsonUnitResponse(raw,1,one);
+                if(!one.containsKey(0)||one.get(0).trim().isEmpty())throw new IOException("unit "+i+" rỗng");
+                recovered.put(i,one.get(0).trim());
+            }catch(Exception ignored){}
+        }
+
+        if(recovered.size()!=units.size()){
+            List<Integer> missing=new ArrayList<>();
+            for(int i=0;i<units.size();i++)if(!recovered.containsKey(i))missing.add(i);
+            throw new IOException("AI thiếu UNIT_"+missing.get(0)+" ở trang "+page+"; recovery thất bại. Lỗi đầu: "+(first==null?"unknown":first.getMessage()));
+        }
+        StringBuilder out=new StringBuilder();
+        for(int i=0;i<units.size();i++){
+            if(i>0)out.append("\\n");
+            out.append("[[[UNIT_").append(i).append("]]]\n").append(recovered.get(i).trim());
+        }
+        return out.toString();
+    }
+
+    private static void parseJsonUnitResponse(String raw,int count,Map<Integer,String> out)throws Exception{
+        if(raw==null)throw new IOException("JSON response rỗng");
+        String t=raw.trim();
+        int a=t.indexOf('['),b=t.lastIndexOf(']');
+        if(a<0||b<=a)throw new IOException("AI không trả JSON array");
+        JSONArray arr=new JSONArray(t.substring(a,b+1));
+        for(int i=0;i<arr.length();i++){
+            JSONObject o=arr.optJSONObject(i);if(o==null)continue;
+            String id=o.optString("id","");
+            String tr=o.optString("translation","").trim();
+            if(tr.isEmpty())continue;
+            try{
+                int n=Integer.parseInt(id);
+                if(n>=0&&n<count)out.put(n,tr);
+            }catch(NumberFormatException ignored){}
+        }
     }
 
     private static String parseUnitResponse(String raw,int count,int page)throws IOException{
