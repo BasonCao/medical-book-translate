@@ -130,7 +130,7 @@ public final class PdfTranslationJob {
                             done++;
                             listener.onProgress(done,total,result.page,
                                     "Đã dịch PDF "+done+"/"+total+" trang | bố cục block + "+parallelism+" trang song song");
-                        }catch(ExecutionException pageFailure){
+                        }catch(java.util.concurrent.ExecutionException pageFailure){
                             Throwable cause=pageFailure.getCause();
                             Exception ex=cause instanceof Exception?(Exception)cause:new IOException("Lỗi dịch trang "+n, cause);
                             int failedPage=extractPageNumber(ex.getMessage());
