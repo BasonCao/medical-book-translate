@@ -106,11 +106,50 @@ jobs:
           "$BUILD_TOOLS/apksigner" verify --verbose "$FINAL"
           rm -f app/build/outputs/apk/debug/app-debug-offline-unsigned.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload Debug APK
+      - name: Split large Debug APK for artifact transfer
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk"
+          rm -rf "$RUNNER_TEMP/mbt-apk-parts"
+          mkdir -p "$RUNNER_TEMP/mbt-apk-parts"
+          split -b 450m -d -a 1 "$APK" "$RUNNER_TEMP/mbt-apk-parts/part-"
+          ls -lh "$RUNNER_TEMP/mbt-apk-parts"
+          sha256sum "$APK" > "$RUNNER_TEMP/mbt-apk-parts/SHA256SUM.txt"
+
+      - name: Upload Debug APK part 0
         uses: actions/upload-artifact@v4
         with:
-          name: medical-book-translator-debug-v1.13.0-offline
-          path: app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk
+          name: medical-book-translator-v1.13.0-offline-part0
+          path: ${{ runner.temp }}/mbt-apk-parts/part-0
+          if-no-files-found: error
+
+      - name: Upload Debug APK part 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: medical-book-translator-v1.13.0-offline-part1
+          path: ${{ runner.temp }}/mbt-apk-parts/part-1
+          if-no-files-found: error
+
+      - name: Upload Debug APK part 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: medical-book-translator-v1.13.0-offline-part2
+          path: ${{ runner.temp }}/mbt-apk-parts/part-2
+          if-no-files-found: error
+
+      - name: Upload Debug APK part 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: medical-book-translator-v1.13.0-offline-part3
+          path: ${{ runner.temp }}/mbt-apk-parts/part-3
+          if-no-files-found: error
+
+      - name: Upload Debug APK checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: medical-book-translator-v1.13.0-offline-checksum
+          path: ${{ runner.temp }}/mbt-apk-parts/SHA256SUM.txt
           if-no-files-found: error
       - name: Prepare and verify stable signing
         id: signing
