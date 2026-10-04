@@ -15,18 +15,73 @@ public final class OfflineNllbTranslator {
     private OfflineNllbTranslator(){}
     public static String translateBatchPrompt(Context context,String prompt,String model)throws Exception{
         if(!OfflineModelManager.isReady(context))throw new IOException("Model offline NLLB chưa được cài đặt.");
-        int a=prompt.indexOf('['),b=prompt.lastIndexOf(']');
-        if(a<0||b<=a)throw new IOException("Offline NLLB nhận batch không hợp lệ.");
-        JSONArray in=new JSONArray(prompt.substring(a,b+1)),out=new JSONArray();
-        for(int i=0;i<in.length();i++){
-            JSONObject item=in.optJSONObject(i);if(item==null)continue;
-            String id=item.optString("id",""),source=item.optString("source","");
-            if(id.isEmpty())continue;
-            String translated=translatePreservingMarkup(context,source,OfflineModelManager.model(context));
-            JSONObject o=new JSONObject();o.put("id",id);o.put("translation",translated);out.put(o);
+        if(prompt==null||prompt.trim().isEmpty())throw new IOException("Offline NLLB nhận prompt rỗng.");
+
+        // EPUB/JSON path: accept the JSON array used by the normal batch router.
+        JSONArray in=findJsonArray(prompt);
+        if(in!=null){
+            JSONArray out=new JSONArray();
+            for(int i=0;i<in.length();i++){
+                JSONObject item=in.optJSONObject(i);if(item==null)continue;
+                String id=item.optString("id","");
+                String source=item.optString("source","");
+                if(id.isEmpty())continue;
+                String translated=translatePreservingMarkup(context,source,OfflineModelManager.model(context));
+                JSONObject o=new JSONObject();o.put("id",id);o.put("translation",translated);out.put(o);
+            }
+            if(out.length()==0)throw new IOException("Offline NLLB không tìm thấy item hợp lệ trong JSON batch.");
+            return out.toString();
         }
-        return out.toString();
+
+        // PDF path: pages are sent as stable [[[UNIT_n]]] markers rather than JSON.
+        Pattern marker=Pattern.compile("\\\[\\\\[\\\\[UNIT_(\\\\d+)\\\\]\\\\]\\\\]\\\\s*",
+                Pattern.CASE_INSENSITIVE);
+        Matcher mm=marker.matcher(prompt);
+        List<Integer> ids=new ArrayList<>();
+        List<Integer> starts=new ArrayList<>();
+        while(mm.find()){ids.add(Integer.parseInt(mm.group(1)));starts.add(mm.end());}
+        if(!ids.isEmpty()){
+            StringBuilder out=new StringBuilder();
+            for(int i=0;i<ids.size();i++){
+                int end=i+1<starts.size()?mmStartForNext(marker,prompt,starts.get(i)):prompt.length();
+                String source=prompt.substring(starts.get(i),end).trim();
+                String translated=translatePreservingMarkup(context,source,OfflineModelManager.model(context));
+                if(i>0)out.append("\\n");
+                out.append("[[[UNIT_").append(ids.get(i)).append("]]]\\n").append(translated);
+            }
+            return out.toString();
+        }
+
+        // Single-item fallback: accept {"id":"...","source":"..."}.
+        try{
+            JSONObject item=new JSONObject(prompt.trim());
+            String id=item.optString("id","");
+            String source=item.optString("source","");
+            if(!id.isEmpty()&&!source.isEmpty()){
+                String translated=translatePreservingMarkup(context,source,OfflineModelManager.model(context));
+                JSONObject out=new JSONObject();out.put("id",id);out.put("translation",translated);
+                return new JSONArray().put(out).toString();
+            }
+        }catch(Exception ignored){}
+
+        throw new IOException("Offline NLLB nhận batch không hợp lệ: không tìm thấy JSON items hoặc UNIT markers.");
     }
+
+    private static JSONArray findJsonArray(String prompt){
+        int end=prompt.lastIndexOf(']');
+        if(end<0)return null;
+        for(int i=prompt.lastIndexOf('[',end);i>=0;i=prompt.lastIndexOf('[',i-1)){
+            try{return new JSONArray(prompt.substring(i,end+1));}catch(Exception ignored){}
+        }
+        return null;
+    }
+
+    private static int mmStartForNext(Pattern marker,String prompt,int after){
+        Matcher m=marker.matcher(prompt);
+        if(m.find(after))return m.start();
+        return prompt.length();
+    }
+
     private static String translatePreservingMarkup(Context c,String html,File model)throws Exception{
         Matcher m=MARKUP.matcher(html);StringBuilder out=new StringBuilder();int pos=0;
         while(m.find()){if(m.start()>pos)out.append(translateTextChunk(c,html.substring(pos,m.start()),model));out.append(m.group());pos=m.end();}
