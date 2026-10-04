@@ -1,5 +1,7 @@
 package com.aitiniubi.medicalbooktranslator.pdf;
 
+import com.aitiniubi.medicalbooktranslator.translation.OfflineNllbTranslator;
+
 import android.content.Context;
 import android.graphics.Path;
 import android.graphics.PointF;
