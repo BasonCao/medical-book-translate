@@ -125,6 +125,60 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onActivityResult(int r,int c,Intent d){
+        if(r==REQ_OFFLINE_MODEL){
+            if(c!=RESULT_OK||d==null||d.getData()==null)return;
+            Uri uri=d.getData();
+            if(offlineButton!=null)offlineButton.setEnabled(false);
+            progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
+            report.setText("📦 Đang nhập model NLLB-600M…");
+            new Thread(()->{
+                File tmp=OfflineModelManager.partial(this);
+                File dst=OfflineModelManager.model(this);
+                try{
+                    File dir=tmp.getParentFile();
+                    if(dir!=null && !dir.exists() && !dir.mkdirs())throw new IOException("Không tạo được thư mục model.");
+                    long expected=-1L;
+                    try(android.content.res.AssetFileDescriptor afd=getContentResolver().openAssetFileDescriptor(uri,"r")){
+                        if(afd!=null)expected=afd.getLength();
+                    }
+                    if(expected>0 && expected<450L*1024L*1024L)throw new IOException("File model quá nhỏ: "+(expected/(1024*1024))+" MB.");
+                    try(InputStream in=getContentResolver().openInputStream(uri)){
+                        if(in==null)throw new IOException("Không mở được file model đã chọn.");
+                        try(OutputStream out=new BufferedOutputStream(new FileOutputStream(tmp,false))){
+                            byte[] buf=new byte[1024*1024]; long done=0; int n;
+                            while((n=in.read(buf))>0){
+                                out.write(buf,0,n); done+=n;
+                                final long dDone=done,total=expected;
+                                runOnUiThread(()->{
+                                    int p=total>0?(int)Math.min(100,(dDone*100L)/total):0;
+                                    progress.setProgress(p);
+                                    report.setText("📦 Nhập model: "+(dDone/(1024*1024))+" MB"+(total>0?" / "+(total/(1024*1024))+" MB":""));
+                                });
+                            }
+                        }
+                    }
+                    if(tmp.length()<450L*1024L*1024L)throw new IOException("File model chưa đủ kích thước Q4_0: "+(tmp.length()/(1024*1024))+" MB.");
+                    if(dst.exists() && !dst.delete())throw new IOException("Không thay thế được model cũ.");
+                    if(!tmp.renameTo(dst))throw new IOException("Không thể hoàn tất việc nhập model.");
+                    if(!OfflineModelManager.isReady(this))throw new IOException("Model đã nhập nhưng engine offline chưa sẵn sàng.");
+                    prefsHolder.edit().putBoolean("offline_enabled",true).apply();
+                    runOnUiThread(()->{
+                        progress.setVisibility(View.GONE);
+                        if(offlineButton!=null)offlineButton.setEnabled(true);
+                        updateOfflineButton();
+                        report.setText("✅ Model NLLB-600M đã được cài từ file.\nDịch OFFLINE không cần Internet/API key.");
+                    });
+                }catch(Exception ex){
+                    runOnUiThread(()->{
+                        progress.setVisibility(View.GONE);
+                        if(offlineButton!=null)offlineButton.setEnabled(true);
+                        updateOfflineButton();
+                        showError(ex);
+                    });
+                }
+            },"offline-model-import").start();
+            return;
+        }
         super.onActivityResult(r,c,d);
         if(r==12&&c==RESULT_OK&&d!=null){
             final Uri u=d.getData();
@@ -347,8 +401,7 @@ public class MainActivity extends Activity {
             TranslationConfig cfg=makeProviderConfig(p);
             if(cfg.endpoint!=null&&!cfg.endpoint.trim().isEmpty()&&cfg.model!=null&&!cfg.model.trim().isEmpty()&&cfg.apiKey!=null&&!cfg.apiKey.trim().isEmpty())out.add(new TranslationRouter.Provider(p,cfg));
         }
-        return out;
-    }
+        return out;    }
 
     private int indexOf(String[] a,String v){for(int i=0;i<a.length;i++)if(a[i].equals(v))return i;return -1;}
     private String[] modelsFor(String p){if(p==null||p.trim().isEmpty())return OR_MODELS;if(p.equals(PROVIDERS[0]))return OR_MODELS;if(p.equals(PROVIDERS[1]))return geminiCatalog()[0];if(p.equals(PROVIDERS[2]))return OPENAI_MODELS;if(p.equals(PROVIDERS[3]))return DEEPSEEK_MODELS;if(p.equals(PROVIDERS[4]))return MISTRAL_MODELS;return new String[]{providerModel(PROVIDERS[5])};}
@@ -697,8 +750,7 @@ public class MainActivity extends Activity {
                 selectedModel=ms.length==0?"":ms[Math.max(0,Math.min(pos,ms.length-1))];
             }
             String enteredKey=key.getText().toString().trim();
-            if(enteredKey.isEmpty()){Toast.makeText(this,"API key đang trống.",Toast.LENGTH_SHORT).show();return;}
-            if(selectedModel.isEmpty()){Toast.makeText(this,"Model đang trống.",Toast.LENGTH_SHORT).show();return;}
+            if(enteredKey.isEmpty()){Toast.makeText(this,"API key đang trống.",Toast.LENGTH_SHORT).show();return;}            if(selectedModel.isEmpty()){Toast.makeText(this,"Model đang trống.",Toast.LENGTH_SHORT).show();return;}
             prefsHolder.edit()
                     .putBoolean(PREF_FREE_POOL,freePool.isChecked())
                     .putBoolean(PREF_ALLOW_PAID,allowPaid.isChecked())
@@ -855,59 +907,6 @@ public class MainActivity extends Activity {
             .show();
     }
 
-    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
-        super.onActivityResult(requestCode,resultCode,data);
-        if(requestCode!=REQ_OFFLINE_MODEL || resultCode!=RESULT_OK || data==null || data.getData()==null)return;
-        Uri uri=data.getData();
-        if(offlineButton!=null)offlineButton.setEnabled(false);
-        progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
-        report.setText("📦 Đang nhập model NLLB-600M…");
-        new Thread(()->{
-            File tmp=OfflineModelManager.partial(this);
-            File dst=OfflineModelManager.model(this);
-            try{
-                File dir=tmp.getParentFile();
-                if(dir!=null && !dir.exists() && !dir.mkdirs())throw new IOException("Không tạo được thư mục model.");
-                long expected=getContentResolver().openAssetFileDescriptor(uri,"r")!=null
-                        ? getContentResolver().openAssetFileDescriptor(uri,"r").getLength() : -1L;
-                if(expected>0 && expected<450L*1024L*1024L)throw new IOException("File model quá nhỏ: "+(expected/(1024*1024))+" MB.");
-                try(InputStream in=getContentResolver().openInputStream(uri)){
-                    if(in==null)throw new IOException("Không mở được file model đã chọn.");
-                    try(OutputStream out=new BufferedOutputStream(new FileOutputStream(tmp,false))){
-                        byte[] buf=new byte[1024*1024]; long done=0; int n;
-                        while((n=in.read(buf))>0){
-                            out.write(buf,0,n); done+=n;
-                            final long d=done, total=expected;
-                            runOnUiThread(()->{
-                                int p=total>0?(int)Math.min(100,(d*100L)/total):0;
-                                progress.setProgress(p);
-                                report.setText("📦 Nhập model: "+(d/(1024*1024))+" MB"+(total>0?" / "+(total/(1024*1024))+" MB":""));
-                            });
-                        }
-                    }
-                }
-                if(tmp.length()<450L*1024L*1024L)throw new IOException("File model chưa đủ kích thước Q4_0: "+(tmp.length()/(1024*1024))+" MB.");
-                if(dst.exists() && !dst.delete())throw new IOException("Không thay thế được model cũ.");
-                if(!tmp.renameTo(dst))throw new IOException("Không thể hoàn tất việc nhập model.");
-                if(!OfflineModelManager.isReady(this))throw new IOException("Model đã nhập nhưng engine offline chưa sẵn sàng.");
-                prefsHolder.edit().putBoolean("offline_enabled",true).apply();
-                runOnUiThread(()->{
-                    progress.setVisibility(View.GONE);
-                    if(offlineButton!=null)offlineButton.setEnabled(true);
-                    updateOfflineButton();
-                    report.setText("✅ Model NLLB-600M đã được cài từ file.\nDịch OFFLINE không cần Internet/API key.");
-                });
-            }catch(Exception ex){
-                runOnUiThread(()->{
-                    progress.setVisibility(View.GONE);
-                    if(offlineButton!=null)offlineButton.setEnabled(true);
-                    updateOfflineButton();
-                    showError(ex);
-                });
-            }
-        },"offline-model-import").start();
-    }
-
     private void translate(){
         if(translating)return;
         if(selectedFile==null){pick();return;}
@@ -1047,8 +1046,7 @@ public class MainActivity extends Activity {
             }
             public void onPaused(File draft,int d,int t,Exception reason){
                 lastOutput=draft;
-                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(draft!=null&&draft.isFile());progress.setProgress(t<=0?0:(int)(100.0*d/t));showError(reason);});
-            }
+                runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);export.setEnabled(draft!=null&&draft.isFile());progress.setProgress(t<=0?0:(int)(100.0*d/t));showError(reason);});            }
             public void onError(Exception e){
                 runOnUiThread(()->{translating=false;translate.setEnabled(true);reset.setEnabled(true);showError(e);});
             }
