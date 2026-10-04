@@ -88,15 +88,15 @@ public final class TranslationJob {
                         try{
                             br=completion.take().get();
                         }catch(Exception batchError){
-                            // A failed batch must not abort the entire book. Recover
-                            // each unit independently below; failed units remain source-only.
                             completedBatches++;
+                            logger.event("BATCH_FAIL", "batch="+completedBatches+" error="+safeLog(batchError));
                             continue;
                         }
                         completedBatches++;
                         Map<String,String> got=br.translations;
                         List<Unit> batch=br.batch;
                         int batchNo=completedBatches;
+                        logger.event("BATCH_RESULT", "batch="+batchNo+" returned="+got.size()+"/"+batch.size());
                         for(Unit u:batch){
                             String t=got.get(u.id);
                             try{
@@ -113,6 +113,7 @@ public final class TranslationJob {
                                     store.put(new TranslationStateStore.Record(
                                             u.id,u.file,u.sourceHash,"","SOURCE_ONLY",3));
                                 }catch(Exception ignored){}
+                                logger.event("UNIT_FAIL", "unit="+u.id.substring(0,Math.min(12,u.id.length()))+" reason="+safeLog(unitError));
                                 listener.onProgress(done,total,batchNo,
                                         "SOURCE_ONLY unit "+u.id.substring(0,Math.min(12,u.id.length()))
                                         +" — giữ nguyên nguồn; sẽ retry ở lần Tiếp tục. "
@@ -132,6 +133,10 @@ public final class TranslationJob {
                     listener.onPaused(draft,done,total,e);return;
                 }finally{pool.shutdownNow();}
 
+                if(done==0 && total>0){
+                    logger.event("STOP", "no unit translated successfully; refusing to export untranslated EPUB");
+                    throw new IOException("Không dịch được unit EPUB nào. Hãy mở log chẩn đoán để xem provider/model đã lỗi ở đâu. App không xuất EPUB giả thành công.");
+                }
                 logger.event("REBUILD", "starting final rebuild translated-current.epub with done=" + done + "/" + total);
                 File finalDraft=new File(workspace,"translated-current.epub");
                 rebuild(source,finalDraft,units,doneMap);copyFile(finalDraft,output);
@@ -379,6 +384,11 @@ public final class TranslationJob {
         if(src.toLowerCase(Locale.US).equals("classic signs")
                 &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";
         return null;
+    }
+
+    private static String safeLog(Throwable e){
+        String m=e==null?"unknown":(e.getMessage()==null?e.toString():e.getMessage());
+        return m.replace("\n"," ").replace("\r"," ").replace("|","/");
     }
 
     private static int sentenceCount(String s){
