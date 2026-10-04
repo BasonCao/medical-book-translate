@@ -46,6 +46,7 @@ public class MainActivity extends Activity {
     private static final String PREF_ALLOW_PAID="allow_paid_fallback";
     private static final String OFFLINE_PROVIDER="Offline NLLB-600M";
     private static final String OFFLINE_MODEL_ID="nllb-600m-Q4_0";
+    private static final int REQ_OFFLINE_MODEL=1907;
 
     private TextView status,report;
     private ProgressBar progress;
@@ -792,8 +793,9 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this)
             .setTitle("Dịch offline NLLB-200 600M")
-            .setMessage("Model Q4_0 khoảng 495 MB. APK không chứa model nên file cài đặt vẫn nhẹ. Sau khi tải xong, dịch có thể chạy không cần Internet/API key. Nếu tải bị gián đoạn, lần sau sẽ tự tiếp tục từ phần đã tải.")
+            .setMessage("Model Q4_0 khoảng 495 MB. APK không chứa model nên file cài đặt vẫn nhẹ. Sau khi tải xong, dịch có thể chạy không cần Internet/API key.\n\nNếu Hugging Face trả HTTP 401/403, bạn có thể tải file bằng Chrome rồi chọn "Nhập model"; app vẫn kiểm tra kích thước và giữ model trong bộ nhớ riêng.")
             .setNegativeButton("Hủy",null)
+            .setNeutralButton("Nhập model", (d,w)->pickOfflineModel())
             .setPositiveButton("Tải model", (d,w)->downloadOfflineModel())
             .show();
     }
@@ -816,9 +818,94 @@ public class MainActivity extends Activity {
                 prefsHolder.edit().putBoolean("offline_enabled",true).apply();
                 runOnUiThread(()->{progress.setVisibility(View.GONE);if(offlineButton!=null)offlineButton.setEnabled(true);updateOfflineButton();report.setText("✅ Dịch OFFLINE NLLB-600M đã sẵn sàng.\nKhông cần Internet/API key khi dịch.");});
             }catch(Exception e){
-                runOnUiThread(()->{progress.setVisibility(View.GONE);if(offlineButton!=null)offlineButton.setEnabled(true);updateOfflineButton();showError(e);});
+                runOnUiThread(()->{
+                    progress.setVisibility(View.GONE);
+                    if(offlineButton!=null)offlineButton.setEnabled(true);
+                    updateOfflineButton();
+                    String m=e.getMessage()==null?e.toString():e.getMessage();
+                    if(m.contains("HTTP 401") || m.contains("HTTP 403")) showOfflineModelRecovery(e);
+                    else showError(e);
+                });
             }
         },"offline-model-download").start();
+    }
+
+    private void pickOfflineModel(){
+        Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        startActivityForResult(i,REQ_OFFLINE_MODEL);
+    }
+
+    private void openOfflineModelPage(){
+        try{
+            Intent i=new Intent(Intent.ACTION_VIEW, Uri.parse("https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf"));
+            startActivity(i);
+        }catch(Exception ignored){}
+    }
+
+    private void showOfflineModelRecovery(Exception e){
+        String msg=e.getMessage()==null?e.toString():e.getMessage();
+        new AlertDialog.Builder(this)
+            .setTitle("Không tải được model NLLB")
+            .setMessage("Nguồn model đang trả HTTP 401/403 cho tải trực tiếp từ app. Đây là lỗi quyền truy cập của máy chủ, không phải lỗi file APK.\n\nCách chắc chắn nhất:\n1. Mở trang model bằng Chrome.\n2. Tải nllb-600m-Q4_0.gguf (~495 MB).\n3. Quay lại app → Dịch offline → Nhập model.\n\nFile sẽ được sao chép vào bộ nhớ riêng của app và không cần tải lại mỗi lần dịch.\n\nChi tiết: "+msg)
+            .setNegativeButton("Đóng",null)
+            .setNeutralButton("Mở trang model",(d,w)->openOfflineModelPage())
+            .setPositiveButton("Nhập file",(d,w)->pickOfflineModel())
+            .show();
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQ_OFFLINE_MODEL || resultCode!=RESULT_OK || data==null || data.getData()==null)return;
+        Uri uri=data.getData();
+        if(offlineButton!=null)offlineButton.setEnabled(false);
+        progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
+        report.setText("📦 Đang nhập model NLLB-600M…");
+        new Thread(()->{
+            File tmp=OfflineModelManager.partial(this);
+            File dst=OfflineModelManager.model(this);
+            try{
+                File dir=tmp.getParentFile();
+                if(dir!=null && !dir.exists() && !dir.mkdirs())throw new IOException("Không tạo được thư mục model.");
+                long expected=getContentResolver().openAssetFileDescriptor(uri,"r")!=null
+                        ? getContentResolver().openAssetFileDescriptor(uri,"r").getLength() : -1L;
+                if(expected>0 && expected<450L*1024L*1024L)throw new IOException("File model quá nhỏ: "+(expected/(1024*1024))+" MB.");
+                try(InputStream in=getContentResolver().openInputStream(uri)){
+                    if(in==null)throw new IOException("Không mở được file model đã chọn.");
+                    try(OutputStream out=new BufferedOutputStream(new FileOutputStream(tmp,false))){
+                        byte[] buf=new byte[1024*1024]; long done=0; int n;
+                        while((n=in.read(buf))>0){
+                            out.write(buf,0,n); done+=n;
+                            final long d=done, total=expected;
+                            runOnUiThread(()->{
+                                int p=total>0?(int)Math.min(100,(d*100L)/total):0;
+                                progress.setProgress(p);
+                                report.setText("📦 Nhập model: "+(d/(1024*1024))+" MB"+(total>0?" / "+(total/(1024*1024))+" MB":""));
+                            });
+                        }
+                    }
+                }
+                if(tmp.length()<450L*1024L*1024L)throw new IOException("File model chưa đủ kích thước Q4_0: "+(tmp.length()/(1024*1024))+" MB.");
+                if(dst.exists() && !dst.delete())throw new IOException("Không thay thế được model cũ.");
+                if(!tmp.renameTo(dst))throw new IOException("Không thể hoàn tất việc nhập model.");
+                if(!OfflineModelManager.isReady(this))throw new IOException("Model đã nhập nhưng engine offline chưa sẵn sàng.");
+                prefsHolder.edit().putBoolean("offline_enabled",true).apply();
+                runOnUiThread(()->{
+                    progress.setVisibility(View.GONE);
+                    if(offlineButton!=null)offlineButton.setEnabled(true);
+                    updateOfflineButton();
+                    report.setText("✅ Model NLLB-600M đã được cài từ file.\nDịch OFFLINE không cần Internet/API key.");
+                });
+            }catch(Exception ex){
+                runOnUiThread(()->{
+                    progress.setVisibility(View.GONE);
+                    if(offlineButton!=null)offlineButton.setEnabled(true);
+                    updateOfflineButton();
+                    showError(ex);
+                });
+            }
+        },"offline-model-import").start();
     }
 
     private void translate(){
