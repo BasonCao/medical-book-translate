@@ -89,10 +89,12 @@ public final class OfflineNllbTranslator {
             StringBuilder out=new StringBuilder();
             for(int i=0;i<ids.size();i++){
                 int end=i+1<starts.size()?mmStartForNext(marker,prompt,starts.get(i)):prompt.length();
-                String source=prompt.substring(starts.get(i),end).trim();
-                String translated=translatePreservingMarkup(context,source,OfflineModelManager.model(context));
-                if(i>0)out.append("\\n");
-                out.append("[[[UNIT_").append(ids.get(i)).append("]]]\\n").append(translated);
+                String source=normalizePdfUnit(prompt.substring(starts.get(i),end));
+                String translated=source;
+                if(hasTranslatablePdfText(source))
+                    translated=translateTextFragment(context,source);
+                if(i>0)out.append("\n");
+                out.append("[[[UNIT_").append(ids.get(i)).append("]]]\n").append(translated);
             }
             return out.toString();
         }
@@ -158,6 +160,18 @@ public final class OfflineNllbTranslator {
             }
         }
         return out;
+    }
+
+    private static String normalizePdfUnit(String source){
+        if(source==null)return "";
+        String x=source.replace("\\\\n","\n").replace("\r\n","\n").replace("\r","\n").trim();
+        x=x.replaceAll("[ \\t]*\\n[ \\t]*"," ");
+        x=x.replaceAll("\\s+"," ").trim();
+        return x;
+    }
+
+    private static boolean hasTranslatablePdfText(String source){
+        return source!=null&&source.matches("(?s).*\\p{L}.*");
     }
 
     private static int mmStartForNext(Pattern marker,String prompt,int after){
