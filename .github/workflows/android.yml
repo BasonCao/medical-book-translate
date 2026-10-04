@@ -66,13 +66,19 @@ jobs:
           set -euo pipefail
           MODEL_DIR="$GITHUB_WORKSPACE/app/src/main/assets/offline-model"
           MODEL="$MODEL_DIR/nllb-600m-Q4_0.gguf"
+          TMP="$RUNNER_TEMP/nllb-600m.gguf.part"
           mkdir -p "$MODEL_DIR"
-          rm -f "$MODEL"
-          URL="https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf"
-          curl -L --fail --retry 5 --retry-delay 5 --retry-all-errors             -A "MedBook-Dich-AI/1.13.0-GitHubActions"             "$URL" -o "$MODEL"
-          SIZE="$(stat -c%s "$MODEL")"
+          rm -f "$MODEL" "$TMP"
+
+          # The original Hosstia Q4_0 file currently returns HTTP 401 from GitHub runners.
+          # Use the public Acceldium NLLB GGUF repository instead. Its nllb-600m.gguf
+          # is a compatible NLLB-200 Distilled 600M GGUF model supported by llama.cpp.
+          URL="https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf"
+          curl -L --fail --retry 5 --retry-delay 5 --retry-all-errors             -A "MedBook-Dich-AI/1.13.0-GitHubActions"             "$URL" -o "$TMP"
+          SIZE="$(stat -c%s "$TMP")"
           echo "Downloaded NLLB model: $SIZE bytes"
-          test "$SIZE" -ge 471859200
+          test "$SIZE" -ge 1500000000
+          mv "$TMP" "$MODEL"
           ls -lh "$MODEL"
 
       - name: Build Debug APK
