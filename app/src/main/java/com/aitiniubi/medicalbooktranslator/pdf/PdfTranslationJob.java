@@ -69,7 +69,8 @@ public final class PdfTranslationJob {
                 boolean layoutV9="9".equals(state.getProperty("pdf.layout.version",""));
                 for(int i=1;i<=total;i++){
                     String t=layoutV9?state.getProperty("page."+i,""):"";
-                    if(!t.trim().isEmpty()){translations.put(i,t);done++;}
+                    boolean failed=layoutV9 && "true".equalsIgnoreCase(state.getProperty("page."+i+".failed","false"));
+                    if(!failed&&!t.trim().isEmpty()){translations.put(i,t);done++;}
                 }
                 listener.onProgress(done,total,0,"Khôi phục tiến độ PDF: "+done+"/"+total);
 
@@ -112,31 +113,69 @@ public final class PdfTranslationJob {
                     submitted++;
                 }
 
+                List<String> failedPages=new ArrayList<>();
+                Exception firstPageError=null;
+                state.setProperty("pdf.layout.version","9");
                 try{
-                    state.setProperty("pdf.layout.version","9");
                     for(int n=0;n<submitted;n++){
-                        PageResult result=completion.take().get();
-                        translations.put(result.page,result.text);
-                        synchronized(state){
-                            state.setProperty("page."+result.page,result.text);
-                            save(state,stateFile);
+                        Future<PageResult> future=completion.take();
+                        try{
+                            PageResult result=future.get();
+                            translations.put(result.page,result.text);
+                            synchronized(state){
+                                state.setProperty("page."+result.page,result.text);
+                                state.remove("page."+result.page+".failed");
+                                save(state,stateFile);
+                            }
+                            done++;
+                            listener.onProgress(done,total,result.page,
+                                    "Đã dịch PDF "+done+"/"+total+" trang | bố cục block + "+parallelism+" trang song song");
+                        }catch(ExecutionException pageFailure){
+                            Throwable cause=pageFailure.getCause();
+                            Exception ex=cause instanceof Exception?(Exception)cause:new IOException("Lỗi dịch trang "+n, cause);
+                            int failedPage=extractPageNumber(ex.getMessage());
+                            if(failedPage<=0)failedPage=findUnfinishedPage(pageUnits,state,total);
+                            if(failedPage<=0)failedPage=n+1;
+                            failedPages.add(String.valueOf(failedPage));
+                            if(firstPageError==null)firstPageError=ex;
+
+                            // Keep the failed page exportable instead of losing it.
+                            // Its original English units are redrawn as a temporary
+                            // SOURCE_ONLY fallback. The page is marked failed so the
+                            // next Dịch/Tiếp tục retries it instead of treating it as done.
+                            List<LayoutUnit> failedUnits=pageUnits.get(failedPage);
+                            if(failedUnits!=null&&!failedUnits.isEmpty()){
+                                String sourceFallback=sourceUnitMap(failedUnits);
+                                translations.put(failedPage,sourceFallback);
+                                synchronized(state){
+                                    state.setProperty("page."+failedPage,sourceFallback);
+                                    state.setProperty("page."+failedPage+".failed","true");
+                                    save(state,stateFile);
+                                }
+                            }
+                            listener.onProgress(done,total,failedPage,
+                                    "⚠ Trang "+failedPage+" chưa dịch hoàn tất — giữ nguyên nguồn để tạo DRAFT; sẽ tự retry khi bấm Dịch / Tiếp tục.");
                         }
-                        done++;
-                        listener.onProgress(done,total,result.page,
-                                "Đã dịch PDF "+done+"/"+total+" trang | bố cục block + "+parallelism+" trang song song");
                     }
-                }catch(java.util.concurrent.ExecutionException e){
-                    Throwable cause=e.getCause();
-                    if(cause instanceof Exception)throw (Exception)cause;
-                    throw new IOException("Lỗi dịch PDF.",cause);
                 }finally{
                     pool.shutdownNow();
                 }
 
+                // Always create an exportable draft when at least one page was
+                // processed. Missing pages remain source-only and are explicitly
+                // marked failed in state for the next resume.
                 File draft=new File(workspace,"translated-current.pdf");
                 buildReflowPdf(context,source,draft,translations,singleColumn);
                 copyFile(draft,output);
-                listener.onDone(output);
+
+                if(!failedPages.isEmpty() || done<total){
+                    String detail="PDF DRAFT đã tạo được "+done+"/"+total+" trang dịch. "
+                            +"Trang chưa hoàn tất: "+String.join(", ",new LinkedHashSet<>(failedPages))
+                            +". Draft giữ nguyên nội dung nguồn ở các trang lỗi và sẽ retry khi bấm Dịch / Tiếp tục.";
+                    listener.onPaused(draft,done,total,new IOException(detail));
+                }else{
+                    listener.onDone(output);
+                }
             }catch(Exception e){
                 listener.onError(e);
             }
@@ -1803,6 +1842,33 @@ public final class PdfTranslationJob {
         final int page;
         final String text;
         PageResult(int page,String text){this.page=page;this.text=text;}
+    }
+
+    private static int extractPageNumber(String message){
+        if(message==null)return -1;
+        java.util.regex.Matcher m=java.util.regex.Pattern.compile("trang\\s+(\\d+)",java.util.regex.Pattern.CASE_INSENSITIVE).matcher(message);
+        if(m.find())try{return Integer.parseInt(m.group(1));}catch(Exception ignored){}
+        m=java.util.regex.Pattern.compile("page\\s+(\\d+)",java.util.regex.Pattern.CASE_INSENSITIVE).matcher(message);
+        if(m.find())try{return Integer.parseInt(m.group(1));}catch(Exception ignored){}
+        return -1;
+    }
+
+    private static int findUnfinishedPage(Map<Integer,List<LayoutUnit>> pageUnits,Properties state,int total){
+        for(int page=1;page<=total;page++){
+            String t=state.getProperty("page."+page,"");
+            boolean failed="true".equalsIgnoreCase(state.getProperty("page."+page+".failed","false"));
+            if((t==null||t.trim().isEmpty())&&!failed&&pageUnits.get(page)!=null&&!pageUnits.get(page).isEmpty())return page;
+        }
+        return -1;
+    }
+
+    private static String sourceUnitMap(List<LayoutUnit> units){
+        StringBuilder out=new StringBuilder();
+        for(int i=0;i<units.size();i++){
+            if(i>0)out.append("\\n");
+            out.append("[[[UNIT_").append(i).append("]]]\n").append(units.get(i).source==null?"":units.get(i).source);
+        }
+        return out.toString();
     }
 
     private static void save(Properties p,File f)throws IOException{
