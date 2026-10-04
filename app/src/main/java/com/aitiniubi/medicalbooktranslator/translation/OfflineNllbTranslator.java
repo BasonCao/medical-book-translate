@@ -242,7 +242,7 @@ public final class OfflineNllbTranslator {
         Map<String,String> protectedDots=new LinkedHashMap<>();
         for(int i=0;i<abbreviations.length;i++){
             String key="__MBT_ABBR_"+i+"__";
-            s=s.replace(abbreviations[i],abbreviations[i].replace(".",""+key));
+            s=s.replace(abbreviations[i],abbreviations[i].replace(".",key));
             protectedDots.put(key,".");
         }
         String[] raw=s.split("(?<=[.!?])\\s+");
