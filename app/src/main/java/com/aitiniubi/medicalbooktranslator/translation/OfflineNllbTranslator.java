@@ -149,8 +149,8 @@ public final class OfflineNllbTranslator {
             while((n=in.read(b))>0){buf.write(b,0,n);if(System.currentTimeMillis()>deadline){p.destroyForcibly();throw new IOException("NLLB offline timeout (>180s).");}}
         }
         int code=p.waitFor();String raw=buf.toString(StandardCharsets.UTF_8.name()).trim();
-        if(code!=0)throw new IOException("NLLB offline engine exit="+code+"\n"+tail(raw)); }
-        String translated=extractTranslation(raw);if(translated.isEmpty())throw new IOException("NLLB offline không trả về bản dịch.\n"+tail(raw));return translated;
+        if(code!=0)throw new IOException("NLLB offline engine exit="+code+"\n"+tail(raw));
+        String translated=extractTranslation(raw);if(translated.isEmpty())throw new IOException("NLLB offline không trả về bản dịch.\n"+tail(raw));return translated; }
     }
     private static String extractTranslation(String raw){
         String[] lines=raw.split("\\R");String candidate="";
