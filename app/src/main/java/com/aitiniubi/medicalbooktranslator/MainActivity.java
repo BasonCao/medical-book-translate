@@ -773,7 +773,7 @@ public class MainActivity extends Activity {
         }else if(OfflineModelManager.isModelReady(this)){
             offlineButton.setText("🧠 Kích hoạt engine OFFLINE NLLB");
         }else{
-            offlineButton.setText("🧠 Cài model DỊCH OFFLINE — NLLB 600M (~495 MB)");
+            offlineButton.setText("🧠 Tải model OFFLINE NLLB 600M (~495 MB)");
         }
     }
 
@@ -792,7 +792,7 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this)
             .setTitle("Dịch offline NLLB-200 600M")
-            .setMessage("Model Q4_0 khoảng 495 MB. Sau khi tải xong, dịch có thể chạy không cần Internet và không cần API key. Model được lưu trong bộ nhớ riêng của app.")
+            .setMessage("Model Q4_0 khoảng 495 MB. APK không chứa model nên file cài đặt vẫn nhẹ. Sau khi tải xong, dịch có thể chạy không cần Internet/API key. Nếu tải bị gián đoạn, lần sau sẽ tự tiếp tục từ phần đã tải.")
             .setNegativeButton("Hủy",null)
             .setPositiveButton("Tải model", (d,w)->downloadOfflineModel())
             .show();
@@ -801,7 +801,7 @@ public class MainActivity extends Activity {
     private void downloadOfflineModel(){
         if(offlineButton!=null)offlineButton.setEnabled(false);
         progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
-        report.setText("⬇ Đang tải model NLLB-600M Q4_0…");
+        long resumeBytes=OfflineModelManager.partialBytes(this);\n        report.setText(resumeBytes>0\n                ? "↻ Tiếp tục tải model NLLB-600M Q4_0… đã có "+(resumeBytes/(1024*1024))+" MB"\n                : "⬇ Đang tải model NLLB-600M Q4_0…");
         new Thread(()->{
             try{
                 OfflineModelManager.downloadModel(this,(done,total)->{
