@@ -43,6 +43,7 @@ public final class TranslationJob {
                 final TranslationLogger logger=new TranslationLogger(workspace);
                 TranslationLogger.bind(logger);
                 TranslationRouter.setDiagnostics(logger,"AI_CALL");
+                TranslationRouter.setAndroidContext(androidContext);
 
                 List<Unit> units=extractUnits(source);
                 String sourceHash=TranslationStateStore.sha256(source);
