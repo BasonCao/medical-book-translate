@@ -13,6 +13,50 @@ public final class OfflineNllbTranslator {
     private static final Pattern MARKUP=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);|__MBT_MARKUP_\\d+__",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
     private static final Pattern LETTER=Pattern.compile(".*\\p{L}.*",Pattern.DOTALL);
     private static final Object ENGINE_LOCK=new Object();
+
+    public static final class EngineResult {
+        public final int exitCode;
+        public final String rawOutput;
+        public final String binaryPath;
+        public final String abi;
+        EngineResult(int exitCode,String rawOutput,String binaryPath,String abi){
+            this.exitCode=exitCode;this.rawOutput=rawOutput;this.binaryPath=binaryPath;this.abi=abi;
+        }
+    }
+
+    public static final class EngineException extends IOException {
+        public EngineException(String message){super(message);}
+        public EngineException(String message,Throwable cause){super(message,cause);}
+    }
+
+    public static boolean isOfflineProvider(List<TranslationRouter.Provider> providers){
+        if(providers==null)return false;
+        for(TranslationRouter.Provider p:providers){
+            if(p!=null&&p.config!=null&&p.config.endpoint!=null&&p.config.endpoint.startsWith("offline://nllb"))return true;
+        }
+        return false;
+    }
+
+    public static boolean isEngineError(Throwable error){
+        Throwable t=error;
+        while(t!=null){
+            if(t instanceof EngineException)return true;
+            t=t.getCause();
+        }
+        return false;
+    }
+
+    public static EngineResult selfTest(Context context,File workspace)throws Exception{
+        String ready=OfflineModelManager.readinessError(context);
+        if(!ready.isEmpty())throw new EngineException(ready);
+        EngineResult result=execute(context,OfflineModelManager.model(context),"Hello",60000L);
+        TranslationLogger logger=workspace==null?TranslationLogger.current():new TranslationLogger(workspace);
+        if(logger!=null)logger.event("OFFLINE_SELF_TEST",
+                "exitCode="+result.exitCode+" binary="+result.binaryPath+" abi="+result.abi
+                +" rawTail="+tail(result.rawOutput));
+        if(result.exitCode!=0)throw engineFailure(result,"self-test");
+        return result;
+    }
     private OfflineNllbTranslator(){}
     public static String translateBatchPrompt(Context context,String prompt,String model)throws Exception{
         if(!OfflineModelManager.isReady(context))throw new IOException("Model offline NLLB chưa được cài đặt.");
@@ -141,17 +185,58 @@ public final class OfflineNllbTranslator {
         if(cur.length()>0)out.add(cur.toString());if(out.isEmpty())out.add(text);return out;
     }
     private static String run(Context c,File model,String text)throws Exception{
-        File exe=OfflineModelManager.binary(c);if(!exe.isFile()||!exe.canExecute())throw new IOException("NLLB engine chưa sẵn sàng.");
-        synchronized(ENGINE_LOCK){ ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),"-m",model.getAbsolutePath(),"-p",text,"-n","200","-t","4");pb.redirectErrorStream(true);
-        Process p=pb.start();ByteArrayOutputStream buf=new ByteArrayOutputStream();
-        try(InputStream in=p.getInputStream()){
-            byte[] b=new byte[8192];int n;long deadline=System.currentTimeMillis()+180000L;
-            while((n=in.read(b))>0){buf.write(b,0,n);if(System.currentTimeMillis()>deadline){p.destroyForcibly();throw new IOException("NLLB offline timeout (>180s).");}}
-        }
-        int code=p.waitFor();String raw=buf.toString(StandardCharsets.UTF_8.name()).trim();
-        if(code!=0)throw new IOException("NLLB offline engine exit="+code+"\n"+tail(raw));
-        String translated=extractTranslation(raw);if(translated.isEmpty())throw new IOException("NLLB offline không trả về bản dịch.\n"+tail(raw));return translated; }
+        EngineResult result=execute(c,model,text,180000L);
+        if(result.exitCode!=0)throw engineFailure(result,"translation");
+        String translated=extractTranslation(result.rawOutput);
+        if(translated.isEmpty())throw engineFailure(result,"translation produced no usable output");
+        return translated;
     }
+
+    private static EngineResult execute(Context c,File model,String text,long timeoutMs)throws Exception{
+        String ready=OfflineModelManager.readinessError(c);
+        if(!ready.isEmpty())throw new EngineException(ready);
+        File exe=OfflineModelManager.binary(c);
+        String abi=android.os.Build.SUPPORTED_ABIS.length==0?"":android.os.Build.SUPPORTED_ABIS[0];
+        synchronized(ENGINE_LOCK){
+            ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),"-m",model.getAbsolutePath(),
+                    "-p",text,"-n",String.valueOf(Math.min(512,Math.max(64,text.length()/2))),"-t","4");
+            pb.redirectErrorStream(true);
+            Process p;
+            try{p=pb.start();}
+            catch(IOException e){
+                EngineException failure=new EngineException("NLLB engine không thể khởi chạy. binary="+exe.getAbsolutePath()+" ABI="+abi+" lỗi="+e.getMessage(),e);
+                TranslationLogger logger=TranslationLogger.current();
+                if(logger!=null)logger.event("OFFLINE_ENGINE_ERROR","exec_failed binary="+exe.getAbsolutePath()+" abi="+abi+" detail="+tail(String.valueOf(e)));
+                throw failure;
+            }
+            ByteArrayOutputStream buf=new ByteArrayOutputStream();
+            try(InputStream in=p.getInputStream()){
+                byte[] b=new byte[8192];int n;long deadline=System.currentTimeMillis()+timeoutMs;
+                while((n=in.read(b))>0){
+                    buf.write(b,0,n);
+                    if(System.currentTimeMillis()>deadline){
+                        p.destroyForcibly();
+                        String raw=buf.toString(StandardCharsets.UTF_8.name());
+                        EngineException failure=new EngineException("NLLB engine timeout. binary="+exe.getAbsolutePath()+" ABI="+abi+" rawTail="+tail(raw));
+                        TranslationLogger logger=TranslationLogger.current();
+                        if(logger!=null)logger.event("OFFLINE_ENGINE_ERROR","timeout binary="+exe.getAbsolutePath()+" abi="+abi+" rawTail="+tail(raw));
+                        throw failure;
+                    }
+                }
+            }
+            int code=p.waitFor();
+            String raw=buf.toString(StandardCharsets.UTF_8.name()).trim();
+            return new EngineResult(code,raw,exe.getAbsolutePath(),abi);
+        }
+    }
+
+    private static EngineException engineFailure(EngineResult result,String stage){
+        String message="NLLB engine lỗi ở "+stage+": exitCode="+result.exitCode+" binary="+result.binaryPath+" ABI="+result.abi+" rawTail="+tail(result.rawOutput);
+        TranslationLogger logger=TranslationLogger.current();
+        if(logger!=null)logger.event("OFFLINE_ENGINE_ERROR","exitCode="+result.exitCode+" binary="+result.binaryPath+" abi="+result.abi+" rawTail="+tail(result.rawOutput));
+        return new EngineException(message);
+    }
+
     private static String extractTranslation(String raw){
         String[] lines=raw.split("\\R");String candidate="";
         for(String line:lines){String s=line.trim();if(s.isEmpty())continue;String lower=s.toLowerCase(Locale.US);

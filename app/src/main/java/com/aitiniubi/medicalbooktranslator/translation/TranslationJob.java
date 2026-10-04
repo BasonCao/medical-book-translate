@@ -94,6 +94,11 @@ public final class TranslationJob {
                         }catch(Exception batchError){
                             completedBatches++;
                             logger.event("BATCH_FAIL", "batch="+completedBatches+" error="+safeLog(batchError));
+                            if(hasOfflineProvider && OfflineNllbTranslator.isEngineError(batchError)){
+                                Throwable root=batchError;
+                                while(root.getCause()!=null)root=root.getCause();
+                                throw root instanceof Exception?(Exception)root:new IOException(root);
+                            }
                             continue;
                         }
                         completedBatches++;
@@ -116,7 +121,10 @@ public final class TranslationJob {
                                 try{
                                     store.put(new TranslationStateStore.Record(
                                             u.id,u.file,u.sourceHash,"","SOURCE_ONLY",3));
-                                }catch(Exception ignored){}
+                                }catch(Exception ignored){
+                if(OfflineNllbTranslator.isOfflineProvider(providers)
+                        && OfflineNllbTranslator.isEngineError(ignored))throw new RuntimeException(ignored);
+            }
                                 logger.event("UNIT_FAIL", "unit="+u.id.substring(0,Math.min(12,u.id.length()))+" reason="+safeLog(unitError));
                                 listener.onProgress(done,total,batchNo,
                                         "SOURCE_ONLY unit "+u.id.substring(0,Math.min(12,u.id.length()))
@@ -428,9 +436,9 @@ public final class TranslationJob {
         try{
             return translateOneBatch(androidContext,batch,providers,glossary);
         }catch(Exception e){
-            // Keep the batch alive so each unit gets its own recovery attempt.
-            // An empty map means no translation is trusted; the original EPUB
-            // source is retained for every unit that still fails.
+            if(OfflineNllbTranslator.isOfflineProvider(providers) && OfflineNllbTranslator.isEngineError(e)){
+                throw new RuntimeException(e);
+            }
             return new BatchResult(batch,new HashMap<>(),
                     "Batch failed; recovering units independently. "+e.getMessage());
         }

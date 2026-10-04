@@ -89,7 +89,10 @@ public class MainActivity extends Activity {
         pdfLayout.setOnClickListener(v->choosePdfLayoutAndTranslate(fallbackProviders()));
         pdfOneColumn.setOnClickListener(v->startPdfWithLayout(true));
         pdfKeepLayout.setOnClickListener(v->startPdfWithLayout(false));
-        if(offlineButton!=null) offlineButton.setOnClickListener(v->manageOfflineModel());
+        if(offlineButton!=null) offlineButton.setOnClickListener(v->{
+            if(OfflineModelManager.isReady(this)) runOfflineSelfTest();
+            else manageOfflineModel();
+        });
         updateOfflineButton();
         updatePdfLayoutButtons();
         reset.setOnClickListener(v->resetProgress());
@@ -828,6 +831,29 @@ public class MainActivity extends Activity {
         }else{
             offlineButton.setText("🧠 Tải model OFFLINE NLLB 600M (~495 MB)");
         }
+    }
+
+    private void runOfflineSelfTest(){
+        if(offlineButton!=null)offlineButton.setEnabled(false);
+        new Thread(()->{
+            try{
+                OfflineNllbTranslator.EngineResult r=OfflineNllbTranslator.selfTest(this,workspace);
+                String msg="Engine OFFLINE tự kiểm tra thành công.\n\n"
+                        +"Exit code: "+r.exitCode+"\nABI: "+r.abi+"\nBinary: "+r.binaryPath+"\n\nRaw output:\n"+r.rawOutput;
+                runOnUiThread(()->{
+                    if(offlineButton!=null)offlineButton.setEnabled(true);
+                    new AlertDialog.Builder(this).setTitle("OFFLINE NLLB self-test")
+                            .setMessage(msg).setPositiveButton("OK",null).show();
+                });
+            }catch(Exception e){
+                String msg=e.getMessage()==null?e.toString():e.getMessage();
+                runOnUiThread(()->{
+                    if(offlineButton!=null)offlineButton.setEnabled(true);
+                    new AlertDialog.Builder(this).setTitle("OFFLINE NLLB self-test thất bại")
+                            .setMessage(msg).setPositiveButton("OK",null).show();
+                });
+            }
+        },"offline-self-test").start();
     }
 
     private void manageOfflineModel(){

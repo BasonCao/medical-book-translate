@@ -87,7 +87,8 @@ public final class PdfTranslationJob {
                 // V1.9.2 stored one translated string per page. That is not enough
                 // for multi-column PDFs because PDF text drawing order can differ
                 // from visual reading order. V1.9.3 uses stable UNIT markers.
-                final int parallelism=3;
+                final boolean hasOfflineProvider=OfflineNllbTranslator.isOfflineProvider(providers);
+                final int parallelism=hasOfflineProvider?1:3;
                 java.util.concurrent.ExecutorService pool=
                         java.util.concurrent.Executors.newFixedThreadPool(parallelism);
                 java.util.concurrent.CompletionService<PageResult> completion=
@@ -1394,6 +1395,12 @@ public final class PdfTranslationJob {
     }
 
     private static String translatePageWithRecovery(Context context,List<LayoutUnit> units,int page,List<TranslationRouter.Provider> providers,String markerPrompt)throws Exception{
+        if(OfflineNllbTranslator.isOfflineProvider(providers)){
+            String raw=TranslationRouter.translate(markerPrompt,
+                    "Medical obstetric ultrasound / fetal medicine textbook. Do not invent, omit, or summarize information.",providers,context);
+            return parseUnitResponse(raw,units.size(),page);
+        }
+
         Exception first=null;
         try{
             String raw=TranslationRouter.translate(markerPrompt,
