@@ -68,12 +68,15 @@ jobs:
           MODEL="$MODEL_DIR/nllb-600m-Q4_0.gguf"
           mkdir -p "$MODEL_DIR"
           python3 -m pip install --disable-pip-version-check -q huggingface_hub
+          export HF_TOKEN="${{ secrets.HF_TOKEN }}"
+          test -n "$HF_TOKEN"
           python3 - <<'PY'
           from huggingface_hub import hf_hub_download
           from pathlib import Path
           src = hf_hub_download(
               repo_id="Hosstia/nllb-200-distilled-600m-gguf",
               filename="nllb-600m-Q4_0.gguf",
+              token=None,
           )
           dst = Path("app/src/main/assets/offline-model/nllb-600m-Q4_0.gguf")
           dst.write_bytes(Path(src).read_bytes())
