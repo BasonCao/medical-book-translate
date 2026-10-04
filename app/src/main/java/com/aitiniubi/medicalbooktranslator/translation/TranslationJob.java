@@ -226,6 +226,11 @@ public final class TranslationJob {
                                                      String context,
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
+        if(OfflineNllbTranslator.isOfflineProvider(providers)){
+            String offline=OfflineNllbTranslator.translateTextFragment(androidContext,u.inner);
+            if(blank(offline))throw new IOException("OFFLINE NLLB trả về nội dung trống cho unit "+u.id);
+            return clean(offline);
+        }
         String t=clean(candidate);
         String sourcePlain=strip(u.inner);
         // Short headings/captions are much safer with a dedicated single-unit
@@ -293,6 +298,9 @@ public final class TranslationJob {
     private static String translateDirect(Context androidContext,Unit u,String context,
                                            List<TranslationRouter.Provider> providers)
             throws Exception{
+        if(OfflineNllbTranslator.isOfflineProvider(providers)){
+            return OfflineNllbTranslator.translateTextFragment(androidContext,u.inner);
+        }
         Map<String,String> marks=new LinkedHashMap<>();
         String src=protectMarkup(u.inner,marks);
         String prompt="Translate ONLY the following English medical-text fragment into professional Vietnamese. "
@@ -306,6 +314,9 @@ public final class TranslationJob {
     private static String translateBySentences(Context androidContext,Unit u,String context,
                                                     List<TranslationRouter.Provider> providers)
             throws Exception{
+        if(OfflineNllbTranslator.isOfflineProvider(providers)){
+            return OfflineNllbTranslator.translateTextFragment(androidContext,u.inner);
+        }
         Map<String,String> marks=new LinkedHashMap<>();
         String src=protectMarkup(u.inner,marks);
         List<String> sentences=splitSentences(src);
@@ -458,10 +469,14 @@ public final class TranslationJob {
         StringBuilder s=new StringBuilder();
         s.append("Return ONLY a JSON array. Each object has exactly id and translation. Keep IDs unchanged. ");
         s.append("Translate only visible English prose. Preserve every HTML/XML tag and attribute. No Markdown.\n");
+        boolean offline=OfflineNllbTranslator.isOfflineProvider(providers);
         for(Unit u:batch){
-            Map<String,String> marks=new LinkedHashMap<>();
-            String protectedSource=protectMarkup(u.inner,marks);
-            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(protectedSource)).append("\"}\n");
+            String source=u.inner;
+            if(!offline){
+                Map<String,String> marks=new LinkedHashMap<>();
+                source=protectMarkup(u.inner,marks);
+            }
+            s.append("{\"id\":\"").append(json(u.id)).append("\",\"source\":\"").append(json(source)).append("\"}\n");
         }
         String response=TranslationRouter.translate(s.toString(),context,providers,androidContext).trim();
         String fence=String.valueOf((char)96)+String.valueOf((char)96)+String.valueOf((char)96);

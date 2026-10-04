@@ -166,6 +166,12 @@ public final class OfflineNllbTranslator {
         return prompt.length();
     }
 
+    public static String translateTextFragment(Context context,String source)throws Exception{
+        if(!OfflineModelManager.isReady(context))throw new EngineException(OfflineModelManager.readinessError(context));
+        if(source==null||source.trim().isEmpty())return "";
+        return translatePreservingMarkup(context,source,OfflineModelManager.model(context));
+    }
+
     private static String translatePreservingMarkup(Context c,String html,File model)throws Exception{
         Matcher m=MARKUP.matcher(html);StringBuilder out=new StringBuilder();int pos=0;
         while(m.find()){if(m.start()>pos)out.append(translateTextChunk(c,html.substring(pos,m.start()),model));out.append(m.group());pos=m.end();}
