@@ -118,7 +118,7 @@ public final class PdfTranslationJob {
                 state.setProperty("pdf.layout.version","9");
                 try{
                     for(int n=0;n<submitted;n++){
-                        Future<PageResult> future=completion.take();
+                        java.util.concurrent.Future<PageResult> future=completion.take();
                         try{
                             PageResult result=future.get();
                             translations.put(result.page,result.text);
