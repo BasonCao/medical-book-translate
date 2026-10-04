@@ -46,40 +46,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/llama-nllb"
           tar -xzf "$RUNNER_TEMP/llama-nllb.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/llama-nllb"
           cd "$RUNNER_TEMP/llama-nllb"
-
           cp "$GITHUB_WORKSPACE/native/nllb.cpp" examples/nllb/nllb.cpp
 
           NDK="$ANDROID_HOME/ndk/27.2.12479018"
           cmake -S . -B build-android -G Ninja             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"             -DANDROID_ABI=arm64-v8a             -DANDROID_PLATFORM=android-26             -DANDROID_STL=c++_static             -DCMAKE_BUILD_TYPE=Release             -DBUILD_SHARED_LIBS=OFF             -DCMAKE_CXX_STANDARD=17             -DGGML_OPENMP=OFF             -DGGML_NATIVE=OFF             -DLLAMA_CURL=OFF             -DLLAMA_BUILD_TESTS=OFF             -DLLAMA_BUILD_SERVER=OFF
-
           cmake --build build-android --target llama-nllb --parallel 2
+
           BIN="$RUNNER_TEMP/llama-nllb/build-android/bin/llama-nllb"
           test -x "$BIN"
           file "$BIN"
           cp "$BIN" "$RUNNER_TEMP/nllb-simple"
           chmod 700 "$RUNNER_TEMP/nllb-simple"
           ls -lh "$RUNNER_TEMP/nllb-simple"
-
-      - name: Download and verify NLLB model
-        shell: bash
-        run: |
-          set -euo pipefail
-          MODEL_DIR="$RUNNER_TEMP/offline-model"
-          MODEL="$MODEL_DIR/nllb-600m-Q4_0.gguf"
-          TMP="$RUNNER_TEMP/nllb-600m.gguf.part"
-          mkdir -p "$MODEL_DIR"
-          rm -f "$MODEL" "$TMP"
-
-          # The original Hosstia Q4_0 file currently returns HTTP 401 from GitHub runners.
-          # Use the public Acceldium NLLB GGUF repository instead. Its nllb-600m.gguf
-          # is a compatible NLLB-200 Distilled 600M GGUF model supported by llama.cpp.
-          URL="https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf"
-          curl -L --fail --retry 5 --retry-delay 5 --retry-all-errors             -A "MedBook-Dich-AI/1.13.0-GitHubActions"             "$URL" -o "$TMP"
-          SIZE="$(stat -c%s "$TMP")"
-          echo "Downloaded NLLB model: $SIZE bytes"
-          test "$SIZE" -ge 1500000000
-          mv "$TMP" "$MODEL"
-          ls -lh "$MODEL"
 
       - name: Build Debug APK
         shell: bash
@@ -88,69 +66,34 @@ jobs:
           gradle --no-build-cache clean assembleDebug
           APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           ENGINE="$RUNNER_TEMP/nllb-simple"
-          MODEL="$RUNNER_TEMP/offline-model/nllb-600m-Q4_0.gguf"
           test -s "$APK"
           test -s "$ENGINE"
-          test -s "$MODEL"
-          python3 tools/inject_offline_engine.py "$APK" "$ENGINE" "$MODEL" app/build/outputs/apk/debug/app-debug-offline-unsigned.apk
+
+          python3 tools/inject_offline_engine.py "$APK" "$ENGINE" app/build/outputs/apk/debug/app-debug-offline-unsigned.apk
           unzip -l app/build/outputs/apk/debug/app-debug-offline-unsigned.apk | grep -F 'assets/offline-engine/nllb-simple'
-          unzip -l app/build/outputs/apk/debug/app-debug-offline-unsigned.apk | grep -F 'assets/offline-model/nllb-600m-Q4_0.gguf'
+
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           mkdir -p "$HOME/.android"
-          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
-          "$BUILD_TOOLS/zipalign" -f 4 app/build/outputs/apk/debug/app-debug-offline-unsigned.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk
-          "$BUILD_TOOLS/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android --out app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk
+          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android             -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000             -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+
+          "$BUILD_TOOLS/zipalign" -f 4             app/build/outputs/apk/debug/app-debug-offline-unsigned.apk             app/build/outputs/apk/debug/app-debug-offline-aligned.apk
+          "$BUILD_TOOLS/apksigner" sign             --ks "$HOME/.android/debug.keystore"             --ks-pass pass:android             --ks-key-alias androiddebugkey             --key-pass pass:android             --out app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk             app/build/outputs/apk/debug/app-debug-offline-aligned.apk
+
           FINAL="app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk"
           unzip -l "$FINAL" | grep -F 'assets/offline-engine/nllb-simple'
-          unzip -l "$FINAL" | grep -F 'assets/offline-model/nllb-600m-Q4_0.gguf'
+          ! unzip -l "$FINAL" | grep -F 'assets/offline-model/nllb-600m'
           "$BUILD_TOOLS/apksigner" verify --verbose "$FINAL"
-          rm -f app/build/outputs/apk/debug/app-debug-offline-unsigned.apk app/build/outputs/apk/debug/app-debug-offline-aligned.apk app/build/outputs/apk/debug/app-debug.apk
+          ls -lh "$FINAL"
+          sha256sum "$FINAL"
+          rm -f app/build/outputs/apk/debug/app-debug-offline-unsigned.apk                 app/build/outputs/apk/debug/app-debug-offline-aligned.apk                 app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Split large Debug APK for artifact transfer
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK="app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk"
-          rm -rf "$RUNNER_TEMP/mbt-apk-parts"
-          mkdir -p "$RUNNER_TEMP/mbt-apk-parts"
-          split -b 450m -d -a 1 "$APK" "$RUNNER_TEMP/mbt-apk-parts/part-"
-          ls -lh "$RUNNER_TEMP/mbt-apk-parts"
-          sha256sum "$APK" > "$RUNNER_TEMP/mbt-apk-parts/SHA256SUM.txt"
-
-      - name: Upload Debug APK part 0
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: medical-book-translator-v1.13.0-offline-part0
-          path: ${{ runner.temp }}/mbt-apk-parts/part-0
+          name: medical-book-translator-v1.13.0-offline-apk
+          path: app/build/outputs/apk/debug/medical-book-translator-v1.13.0-offline-debug.apk
           if-no-files-found: error
 
-      - name: Upload Debug APK part 1
-        uses: actions/upload-artifact@v4
-        with:
-          name: medical-book-translator-v1.13.0-offline-part1
-          path: ${{ runner.temp }}/mbt-apk-parts/part-1
-          if-no-files-found: error
-
-      - name: Upload Debug APK part 2
-        uses: actions/upload-artifact@v4
-        with:
-          name: medical-book-translator-v1.13.0-offline-part2
-          path: ${{ runner.temp }}/mbt-apk-parts/part-2
-          if-no-files-found: error
-
-      - name: Upload Debug APK part 3
-        uses: actions/upload-artifact@v4
-        with:
-          name: medical-book-translator-v1.13.0-offline-part3
-          path: ${{ runner.temp }}/mbt-apk-parts/part-3
-          if-no-files-found: error
-
-      - name: Upload Debug APK checksum
-        uses: actions/upload-artifact@v4
-        with:
-          name: medical-book-translator-v1.13.0-offline-checksum
-          path: ${{ runner.temp }}/mbt-apk-parts/SHA256SUM.txt
-          if-no-files-found: error
       - name: Prepare and verify stable signing
         id: signing
         env:
@@ -162,28 +105,17 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] || [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
-            echo "::warning::Stable signing secrets are not configured. Debug APK will still be built and uploaded; stable release is skipped."
+            echo "::warning::Stable signing secrets are not configured. Debug APK is still built and uploaded; stable release is skipped."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
           KEYSTORE="$RUNNER_TEMP/medical-book-translator-release.jks"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
           test -s "$KEYSTORE"
 
           EXPECTED_CERT_SHA256="BAAC5E5380BA5F9B5CB1E2817662CCD576C5F34035C1C11473365539CC0B10F4"
           ACTUAL_CERT_SHA256="$(keytool -list -v -keystore "$KEYSTORE" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" | awk -F': ' '/SHA256:/{gsub(":", "", $2); print toupper($2); exit}')"
-
-          if [ -z "$ACTUAL_CERT_SHA256" ]; then
-            echo "::error::Could not read the release signing certificate."
-            exit 1
-          fi
-
-          if [ "$ACTUAL_CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]; then
-            echo "::error::Wrong signing keystore/certificate. Refusing to build a release APK."
-            exit 1
-          fi
-
+          test "$ACTUAL_CERT_SHA256" = "$EXPECTED_CERT_SHA256"
           echo "Stable signing certificate verified."
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
@@ -194,20 +126,25 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
         run: |
+          set -euxo pipefail
           gradle --no-build-cache assembleRelease
-          APK="app/build/outputs/apk/release/app-release.apk"
-          ENGINE="app/src/main/assets/offline-engine/nllb-simple"
-          test -s "$APK"
+          RAW="app/build/outputs/apk/release/app-release.apk"
+          ENGINE="$RUNNER_TEMP/nllb-simple"
+          test -s "$RAW"
           test -s "$ENGINE"
-          cp "$APK" app/build/outputs/apk/release/medical-book-translator-v1.13.0.apk
-          unzip -l "$APK" | grep -q "assets/offline-engine/nllb-simple"
+
+          python3 tools/inject_offline_engine.py "$RAW" "$ENGINE" app/build/outputs/apk/release/app-release-offline-unsigned.apk
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          "$BUILD_TOOLS/zipalign" -f 4             app/build/outputs/apk/release/app-release-offline-unsigned.apk             app/build/outputs/apk/release/app-release-offline-aligned.apk
+          "$BUILD_TOOLS/apksigner" sign             --ks "$ANDROID_KEYSTORE_FILE"             --ks-pass env:ANDROID_KEYSTORE_PASSWORD             --ks-key-alias "$ANDROID_KEY_ALIAS"             --key-pass env:ANDROID_KEY_PASSWORD             --out app/build/outputs/apk/release/medical-book-translator-v1.13.0.apk             app/build/outputs/apk/release/app-release-offline-aligned.apk
+
           FINAL="app/build/outputs/apk/release/medical-book-translator-v1.13.0.apk"
-          test -s "$FINAL"
-          unzip -l "$FINAL" | grep -q 'assets/offline-engine/nllb-simple'
-          rm -f app/build/outputs/apk/release/app-release.apk
+          unzip -l "$FINAL" | grep -F 'assets/offline-engine/nllb-simple'
+          ! unzip -l "$FINAL" | grep -F 'assets/offline-model/nllb-600m'
+          "$BUILD_TOOLS/apksigner" verify --verbose "$FINAL"
+          rm -f "$RAW" app/build/outputs/apk/release/app-release-offline-unsigned.apk app/build/outputs/apk/release/app-release-offline-aligned.apk
 
       - name: Verify stable release APK
         if: steps.signing.outputs.enabled == 'true'
@@ -215,18 +152,15 @@ jobs:
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/release/medical-book-translator-v1.13.0.apk"
-          test -n "$APK"
           EXPECTED_CERT_SHA256="BAAC5E5380BA5F9B5CB1E2817662CCD576C5F34035C1C11473365539CC0B10F4"
           ACTUAL_APK_CERT_SHA256="$(apksigner verify --print-certs "$APK" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{gsub(":", "", $2); print toupper($2); exit}')"
-          test -n "$ACTUAL_APK_CERT_SHA256"
           test "$ACTUAL_APK_CERT_SHA256" = "$EXPECTED_CERT_SHA256"
           sha256sum "$APK"
-
 
       - name: Upload Stable Release APK
         if: steps.signing.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: medical-book-translator-stable-v1.12.1
+          name: medical-book-translator-stable-v1.13.0
           path: app/build/outputs/apk/release/medical-book-translator-v1.13.0.apk
           if-no-files-found: error
