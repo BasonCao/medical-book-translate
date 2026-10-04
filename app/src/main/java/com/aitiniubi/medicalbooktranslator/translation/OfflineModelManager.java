@@ -24,9 +24,9 @@ public final class OfflineModelManager {
 
     // Public model documented by the upstream model card as the mobile Q4_0 build (~495 MB).
     public static final String MODEL_URL =
-            "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf";
+            "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf?download=true";
     public static final String MODEL_URL_FALLBACK =
-            "https://hf-mirror.com/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf";
+            "https://hf-mirror.com/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf?download=true";
 
     private static final long MIN_MODEL_BYTES = 450L * 1024L * 1024L;
     private static final long EXPECTED_MODEL_BYTES = 495L * 1024L * 1024L;
