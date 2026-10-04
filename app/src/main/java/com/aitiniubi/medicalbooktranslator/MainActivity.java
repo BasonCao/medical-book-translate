@@ -801,7 +801,10 @@ public class MainActivity extends Activity {
     private void downloadOfflineModel(){
         if(offlineButton!=null)offlineButton.setEnabled(false);
         progress.setVisibility(View.VISIBLE);progress.setIndeterminate(false);progress.setMax(100);
-        long resumeBytes=OfflineModelManager.partialBytes(this);\n        report.setText(resumeBytes>0\n                ? "↻ Tiếp tục tải model NLLB-600M Q4_0… đã có "+(resumeBytes/(1024*1024))+" MB"\n                : "⬇ Đang tải model NLLB-600M Q4_0…");
+        long resumeBytes=OfflineModelManager.partialBytes(this);
+        report.setText(resumeBytes>0
+                ? "↻ Tiếp tục tải model NLLB-600M Q4_0… đã có "+(resumeBytes/(1024*1024))+" MB"
+                : "⬇ Đang tải model NLLB-600M Q4_0…");
         new Thread(()->{
             try{
                 OfflineModelManager.downloadModel(this,(done,total)->{
