@@ -179,11 +179,68 @@ public final class OfflineNllbTranslator {
         return out.toString();
     }
     private static List<String> splitLongText(String text){
-        if(text.length()<=1400)return Collections.singletonList(text);
-        List<String> out=new ArrayList<>();String[] sentences=text.split("(?<=[.!?;:])\\s+");StringBuilder cur=new StringBuilder();
-        for(String s:sentences){if(cur.length()>0&&cur.length()+s.length()+1>1400){out.add(cur.toString());cur.setLength(0);}if(cur.length()>0)cur.append(' ');cur.append(s);}
-        if(cur.length()>0)out.add(cur.toString());if(out.isEmpty())out.add(text);return out;
+        final int TARGET=280;
+        final int HARD_MAX=320;
+        List<String> sentences=splitSentencesForOffline(text);
+        List<String> out=new ArrayList<>();
+        StringBuilder current=new StringBuilder();
+        for(String sentence:sentences){
+            String normalized=sentence.trim();
+            if(normalized.isEmpty())continue;
+            if(normalized.length()>HARD_MAX){
+                if(current.length()>0){out.add(current.toString().trim());current.setLength(0);}
+                splitOversizedSentence(normalized,TARGET,out);
+                continue;
+            }
+            if(current.length()>0&&current.length()+1+normalized.length()>TARGET){
+                out.add(current.toString().trim());
+                current.setLength(0);
+            }
+            if(current.length()>0)current.append(' ');
+            current.append(normalized);
+        }
+        if(current.length()>0)out.add(current.toString().trim());
+        if(out.isEmpty()&&!text.trim().isEmpty())out.add(text.trim());
+        return out;
     }
+
+    private static List<String> splitSentencesForOffline(String text){
+        List<String> out=new ArrayList<>();
+        if(text==null||text.trim().isEmpty())return out;
+        String s=text.replace("\r"," ").replace("\n"," ").replaceAll("\\s+"," ").trim();
+        String[] abbreviations={"Fig.","Figs.","et al.","vs.","e.g.","i.e.","Dr.","Mr.","Mrs.","Ms.","No.","Eq.","approx.","etc."};
+        Map<String,String> protectedDots=new LinkedHashMap<>();
+        for(int i=0;i<abbreviations.length;i++){
+            String key="__MBT_ABBR_"+i+"__";
+            s=s.replace(abbreviations[i],abbreviations[i].replace(".",""+key));
+            protectedDots.put(key,".");
+        }
+        String[] raw=s.split("(?<=[.!?])\\s+");
+        for(String part:raw){
+            String x=part;
+            for(Map.Entry<String,String> e:protectedDots.entrySet())x=x.replace(e.getKey(),e.getValue());
+            if(!x.trim().isEmpty())out.add(x.trim());
+        }
+        return out;
+    }
+
+    private static void splitOversizedSentence(String sentence,int target,List<String> out){
+        String remaining=sentence.trim();
+        while(remaining.length()>target){
+            int cut=-1;
+            for(int i=Math.min(target,remaining.length()-1);i>=Math.max(80,target-80);i--){
+                char ch=remaining.charAt(i);
+                if(Character.isWhitespace(ch)||ch==','||ch==';'||ch==':'){
+                    cut=i;break;
+                }
+            }
+            if(cut<=0)break;
+            out.add(remaining.substring(0,cut).trim());
+            remaining=remaining.substring(cut+1).trim();
+        }
+        if(!remaining.isEmpty())out.add(remaining);
+    }
+
     private static String run(Context c,File model,String text)throws Exception{
         EngineResult result=execute(c,model,text,180000L);
         if(result.exitCode!=0)throw engineFailure(result,"translation");
