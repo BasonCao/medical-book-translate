@@ -46,6 +46,7 @@ public final class TranslationJob {
                 TranslationRouter.setAndroidContext(androidContext);
 
                 List<Unit> units=extractUnits(source);
+                final boolean hasOfflineProvider=OfflineNllbTranslator.isOfflineProvider(providers);
                 String sourceHash=TranslationStateStore.sha256(source);
                 int total=0;
                 for(Unit u:units) if(u.translatable) total++;
@@ -58,7 +59,7 @@ public final class TranslationJob {
                 int done=0;
                 for(Unit u:units){
                     TranslationStateStore.Record r=store.get(u.id,u.sourceHash);
-                    if(r!=null&&!blank(r.translation)&&looksComplete(u,r.translation)){
+                    if(r!=null&&!blank(r.translation)&&looksComplete(u,r.translation,hasOfflineProvider)){
                         doneMap.put(u.id,r.translation);done++;
                     }
                 }
@@ -74,7 +75,6 @@ public final class TranslationJob {
                 }
 
                 final List<GlossaryManager.Term> glossary=GlossaryManager.load(workspace);
-                final boolean hasOfflineProvider=providers.stream().anyMatch(p -> p != null && p.config != null && p.config.endpoint != null && p.config.endpoint.startsWith("offline://nllb"));
                 // NLLB-600M is a ~495 MB encoder/decoder model. Serialize offline work
                 // because concurrent native processes can exceed Android memory limits.
                 final int parallelism=hasOfflineProvider?1:3;
@@ -227,9 +227,23 @@ public final class TranslationJob {
                                                      List<TranslationRouter.Provider> providers)
             throws Exception{
         if(OfflineNllbTranslator.isOfflineProvider(providers)){
-            String offline=OfflineNllbTranslator.translateTextFragment(androidContext,u.inner);
-            if(blank(offline))throw new IOException("OFFLINE NLLB trả về nội dung trống cho unit "+u.id);
-            return clean(offline);
+            String t=clean(candidate);
+            String reason=validationReason(u,t,false);
+            if(reason==null)return t;
+
+            String retry=OfflineNllbTranslator.translateTextFragment(androidContext,u.inner);
+            if(blank(retry)||strip(retry).isEmpty())
+                throw new IOException("OFFLINE NLLB trả về nội dung trống cho unit "+u.id);
+
+            retry=clean(retry);
+            String retryReason=validationReason(u,retry,false);
+            if(retryReason==null)return retry;
+
+            TranslationLogger logger=TranslationLogger.current();
+            if(logger!=null)logger.event("OFFLINE_ACCEPT_WITH_WARNING",
+                    "unit="+u.id.substring(0,Math.min(12,u.id.length()))
+                    +" reason="+safeLog(new IOException(retryReason)));
+            return retry;
         }
         String t=clean(candidate);
         String sourcePlain=strip(u.inner);
@@ -291,8 +305,8 @@ public final class TranslationJob {
         return t;
     }
 
-    private static boolean looksComplete(Unit u,String translation){
-        return validationReason(u,translation)==null;
+    private static boolean looksComplete(Unit u,String translation,boolean offline){
+        return validationReason(u,translation,!offline)==null;
     }
 
     private static String translateDirect(Context androidContext,Unit u,String context,
@@ -362,6 +376,10 @@ public final class TranslationJob {
     }
 
     private static String validationReason(Unit u,String translation){
+        return validationReason(u,translation,true);
+    }
+
+    private static String validationReason(Unit u,String translation,boolean checkHeadings){
         if(blank(translation))return "AI trả về nội dung trống";
         String src=strip(u.inner);
         String dst=strip(translation);
@@ -393,6 +411,7 @@ public final class TranslationJob {
                 return "thiếu số liệu/citation quan trọng ("+covered+"/"+total+" token được giữ lại)";
         }
 
+        if(checkHeadings){
         String low=dst.toLowerCase(Locale.US);
         if(src.toLowerCase(Locale.US).equals("feature")
                 &&!low.equals("đặc điểm")&&!low.equals("đặc trưng"))return "heading Feature chưa được dịch";
@@ -406,6 +425,7 @@ public final class TranslationJob {
                 &&!low.contains("định nghĩa"))return "heading Definition chưa được dịch";
         if(src.toLowerCase(Locale.US).equals("classic signs")
                 &&!low.contains("dấu hiệu"))return "heading Classic Signs chưa được dịch";
+        }
         return null;
     }
 
