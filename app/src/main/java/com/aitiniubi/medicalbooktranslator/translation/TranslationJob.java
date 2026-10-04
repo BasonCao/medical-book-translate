@@ -114,6 +114,7 @@ public final class TranslationJob {
                                 doneMap.put(u.id,t);done++;
                                 listener.onProgress(done,total,batchNo,"Đã lưu batch "+batchNo);
                             }catch(Exception unitError){
+                                if(hasOfflineProvider && OfflineNllbTranslator.isEngineError(unitError)) throw unitError;
                                 // Never stop the whole EPUB because one short heading,
                                 // caption, or transient AI response failed. Do NOT store an
                                 // empty translation. rebuild() will keep the original source
