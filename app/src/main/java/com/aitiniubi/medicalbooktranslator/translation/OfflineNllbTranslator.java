@@ -12,6 +12,7 @@ import java.util.regex.*;
 public final class OfflineNllbTranslator {
     private static final Pattern MARKUP=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
     private static final Pattern LETTER=Pattern.compile(".*\\p{L}.*",Pattern.DOTALL);
+    private static final Object ENGINE_LOCK=new Object();
     private OfflineNllbTranslator(){}
     public static String translateBatchPrompt(Context context,String prompt,String model)throws Exception{
         if(!OfflineModelManager.isReady(context))throw new IOException("Model offline NLLB chưa được cài đặt.");
@@ -141,14 +142,14 @@ public final class OfflineNllbTranslator {
     }
     private static String run(Context c,File model,String text)throws Exception{
         File exe=OfflineModelManager.binary(c);if(!exe.isFile()||!exe.canExecute())throw new IOException("NLLB engine chưa sẵn sàng.");
-        ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),"-m",model.getAbsolutePath(),"-p",text,"-n","200","-t","4");pb.redirectErrorStream(true);
+        synchronized(ENGINE_LOCK){ ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),"-m",model.getAbsolutePath(),"-p",text,"-n","200","-t","4");pb.redirectErrorStream(true);
         Process p=pb.start();ByteArrayOutputStream buf=new ByteArrayOutputStream();
         try(InputStream in=p.getInputStream()){
-            byte[] b=new byte[8192];int n;long deadline=System.currentTimeMillis()+120000L;
-            while((n=in.read(b))>0){buf.write(b,0,n);if(System.currentTimeMillis()>deadline){p.destroyForcibly();throw new IOException("NLLB offline timeout (>120s).");}}
+            byte[] b=new byte[8192];int n;long deadline=System.currentTimeMillis()+180000L;
+            while((n=in.read(b))>0){buf.write(b,0,n);if(System.currentTimeMillis()>deadline){p.destroyForcibly();throw new IOException("NLLB offline timeout (>180s).");}}
         }
         int code=p.waitFor();String raw=buf.toString(StandardCharsets.UTF_8.name()).trim();
-        if(code!=0)throw new IOException("NLLB offline engine exit="+code+"\n"+tail(raw));
+        if(code!=0)throw new IOException("NLLB offline engine exit="+code+"\n"+tail(raw)); }
         String translated=extractTranslation(raw);if(translated.isEmpty())throw new IOException("NLLB offline không trả về bản dịch.\n"+tail(raw));return translated;
     }
     private static String extractTranslation(String raw){
