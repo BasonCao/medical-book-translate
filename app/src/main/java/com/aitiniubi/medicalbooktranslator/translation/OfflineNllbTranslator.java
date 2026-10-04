@@ -17,20 +17,20 @@ public final class OfflineNllbTranslator {
         if(!OfflineModelManager.isReady(context))throw new IOException("Model offline NLLB chưa được cài đặt.");
         if(prompt==null||prompt.trim().isEmpty())throw new IOException("Offline NLLB nhận prompt rỗng.");
 
-        // EPUB/JSON path: accept the JSON array used by the normal batch router.
-        JSONArray in=findJsonArray(prompt);
-        if(in!=null){
+        // JSON path: TranslationJob sends a natural-language instruction followed by
+        // one JSON object per line. Recovery/direct requests may also contain a
+        // single JSON object embedded after the instruction text.
+        List<JSONObject> items=findJsonObjects(prompt);
+        if(!items.isEmpty()){
             JSONArray out=new JSONArray();
-            for(int i=0;i<in.length();i++){
-                JSONObject item=in.optJSONObject(i);if(item==null)continue;
+            for(JSONObject item:items){
                 String id=item.optString("id","");
                 String source=item.optString("source","");
-                if(id.isEmpty())continue;
+                if(id.isEmpty()||source.isEmpty())continue;
                 String translated=translatePreservingMarkup(context,source,OfflineModelManager.model(context));
                 JSONObject o=new JSONObject();o.put("id",id);o.put("translation",translated);out.put(o);
             }
-            if(out.length()==0)throw new IOException("Offline NLLB không tìm thấy item hợp lệ trong JSON batch.");
-            return out.toString();
+            if(out.length()>0)return out.toString();
         }
 
         // PDF path: pages are sent as stable [[[UNIT_n]]] markers rather than JSON.
@@ -64,16 +64,54 @@ public final class OfflineNllbTranslator {
             }
         }catch(Exception ignored){}
 
-        throw new IOException("Offline NLLB nhận batch không hợp lệ: không tìm thấy JSON items hoặc UNIT markers.");
+        throw new IOException("Offline NLLB nhận batch không hợp lệ: không tìm thấy JSON items hoặc UNIT marker    private static List<JSONObject> findJsonObjects(String prompt){
+        List<JSONObject> out=new ArrayList<>();
+        if(prompt==null)return out;
+        // Fast path: each batch item is a complete JSON object on its own line.
+        String[] lines=prompt.split("\\R");
+        for(String line:lines){
+            String s=line.trim();
+            if(s.isEmpty())continue;
+            int start=s.indexOf('{'), end=s.lastIndexOf('}');
+            if(start>=0&&end>start){
+                try{
+                    JSONObject o=new JSONObject(s.substring(start,end+1));
+                    if(o.has("id")&&o.has("source"))out.add(o);
+                }catch(Exception ignored){}
+            }
+        }
+        if(!out.isEmpty())return out;
+
+        // Embedded single-object recovery prompt. Find balanced JSON braces
+        // while respecting quoted strings and escaped characters.
+        int depth=0,start=-1;boolean quoted=false,escaped=false;
+        for(int i=0;i<prompt.length();i++){
+            char ch=prompt.charAt(i);
+            if(quoted){
+                if(escaped)escaped=false;
+                else if(ch=='\\\\')escaped=true;
+                else if(ch=='"')quoted=false;
+                continue;
+            }
+            if(ch=='"'){quoted=true;continue;}
+            if(ch=='{'){
+                if(depth==0)start=i;
+                depth++;
+            }else if(ch=='}'&&depth>0){
+                depth--;
+                if(depth==0&&start>=0){
+                    try{
+                        JSONObject o=new JSONObject(prompt.substring(start,i+1));
+                        if(o.has("id")&&o.has("source"))out.add(o);
+                    }catch(Exception ignored){}
+                    start=-1;
+                }
+            }
+        }
+        return out;
     }
 
-    private static JSONArray findJsonArray(String prompt){
-        int end=prompt.lastIndexOf(']');
-        if(end<0)return null;
-        for(int i=prompt.lastIndexOf('[',end);i>=0;i=prompt.lastIndexOf('[',i-1)){
-            try{return new JSONArray(prompt.substring(i,end+1));}catch(Exception ignored){}
-        }
-        return null;
+null;
     }
 
     private static int mmStartForNext(Pattern marker,String prompt,int after){
