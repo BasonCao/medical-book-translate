@@ -92,7 +92,7 @@ public final class OfflineNllbTranslator {
                 String rawSource=prompt.substring(starts.get(i),end).trim();
                 String source=normalizePdfUnit(rawSource);
                 String translated=hasTranslatablePdfText(source)
-                        ? translateTextFragment(context,source) : rawSource;
+                        ? translatePlainText(context,source) : rawSource;
                 if(i>0)out.append("\n");
                 out.append("[[[UNIT_").append(ids.get(i)).append("]]]\n").append(translated);
             }
@@ -165,6 +165,7 @@ public final class OfflineNllbTranslator {
     private static String normalizePdfUnit(String source){
         if(source==null)return "";
         String x=source.replace("\\n","\n").replace("\\\\n","\n").replace("\r\n","\n").replace("\r","\n").trim();
+        x=x.replaceAll("(?<=\\p{L})-\\n(?=\\p{L})","");
         x=x.replaceAll("[ \\t]*\\n[ \\t]*"," ");
         x=x.replaceAll("\\s+"," ").trim();
         return x;
@@ -178,6 +179,15 @@ public final class OfflineNllbTranslator {
         Matcher m=marker.matcher(prompt);
         if(m.find(after))return m.start();
         return prompt.length();
+    }
+
+    public static String translatePlainText(Context context,String source)throws Exception{
+        if(!OfflineModelManager.isReady(context))throw new EngineException(OfflineModelManager.readinessError(context));
+        if(source==null||source.trim().isEmpty())return "";
+        String x=source.replace("\\n","\n").replace("\r\n","\n").replace("\r","\n");
+        x=x.replaceAll("(?<=\\p{L})-\\n(?=\\p{L})","");
+        x=x.replaceAll("[ \\t]*\\n[ \\t]*"," ").replaceAll("\\s+"," ").trim();
+        return translateTextChunk(context,x,OfflineModelManager.model(context));
     }
 
     public static String translateTextFragment(Context context,String source)throws Exception{
