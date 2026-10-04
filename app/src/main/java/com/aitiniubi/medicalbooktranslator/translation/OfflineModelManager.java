@@ -24,6 +24,7 @@ public final class OfflineModelManager {
     public static File model(Context c) { return new File(root(c), MODEL_FILE); }
     public static File binary(Context c) { return new File(root(c), BINARY_FILE); }
     private static final String BINARY_ASSET = "offline-engine/nllb-simple";
+    private static final String MODEL_ASSET = "offline-model/nllb-600m-Q4_0.gguf";
     public static boolean isModelReady(Context c) { File f=model(c); return f.isFile() && f.length()>=MIN_MODEL_BYTES; }
     public static boolean isReady(Context c) { return isModelReady(c) && ensureBinary(c); }
     public static boolean ensureBinary(Context c) {
@@ -46,6 +47,7 @@ public final class OfflineModelManager {
 
     public static void downloadModel(Context c, Progress progress) throws Exception {
         File dir=root(c); if(!dir.exists()&&!dir.mkdirs()) throw new IOException("Không tạo được thư mục model offline.");
+        if(copyBundledModel(c, progress)) return;
         File tmp=new File(dir,MODEL_FILE+".part"), dst=model(c);
         OkHttpClient bootstrap=new OkHttpClient.Builder().connectTimeout(30,TimeUnit.SECONDS).readTimeout(180,TimeUnit.SECONDS).writeTimeout(180,TimeUnit.SECONDS).retryOnConnectionFailure(true).build();
         DnsOverHttps doh=new DnsOverHttps.Builder().client(bootstrap).url(HttpUrl.parse("https://cloudflare-dns.com/dns-query")).bootstrapDnsHosts(ip("1.1.1.1"),ip("1.0.0.1"),ip("2606:4700:4700::1111"),ip("2606:4700:4700::1001")).includeIPv6(true).build();
@@ -74,5 +76,33 @@ public final class OfflineModelManager {
         if(dst.exists()&&!dst.delete())throw new IOException("Không thay thế được model cũ.");
         if(!tmp.renameTo(dst))throw new IOException("Không thể hoàn tất cài model offline.");
     }
+    private static boolean copyBundledModel(Context c, Progress progress) {
+        File dst=model(c);
+        File tmp=new File(root(c),MODEL_FILE+".asset.part");
+        try(InputStream in=c.getAssets().open(MODEL_ASSET);
+            OutputStream out=new BufferedOutputStream(new FileOutputStream(tmp))) {
+            byte[] buf=new byte[1024*1024];
+            long done=0;
+            int n;
+            while((n=in.read(buf))>0) {
+                out.write(buf,0,n);
+                done+=n;
+                if(progress!=null) progress.onProgress(done,MIN_MODEL_BYTES);
+            }
+        } catch(IOException e) {
+            tmp.delete();
+            return false;
+        }
+        if(tmp.length()<MIN_MODEL_BYTES) {
+            tmp.delete();
+            return false;
+        }
+        if(dst.exists()&&!dst.delete()) {
+            tmp.delete();
+            return false;
+        }
+        return tmp.renameTo(dst);
+    }
+
     private static InetAddress ip(String value){ try{return InetAddress.getByName(value);}catch(UnknownHostException e){throw new IllegalStateException("Invalid DNS bootstrap address: "+value,e);} }
 }
