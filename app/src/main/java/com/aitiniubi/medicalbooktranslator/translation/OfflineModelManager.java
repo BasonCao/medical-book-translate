@@ -8,10 +8,10 @@ import okhttp3.Response;
 
 /** Manages the optional on-device NLLB-200 distilled 600M Q4_0 model. */
 public final class OfflineModelManager {
-    public static final String MODEL_FILE = "nllb-600m.gguf";
+    public static final String MODEL_FILE = "nllb-600m-Q4_0.gguf";
     public static final String BINARY_FILE = "nllb-simple";
-    public static final String MODEL_URL = "https://huggingface.co/JosephTu/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf";
-    private static final String MODEL_URL_FALLBACK = "https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf";
+    public static final String MODEL_URL = "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf";
+    private static final String MODEL_URL_FALLBACK = "https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m-Q4_0.gguf";
     private static final long MIN_MODEL_BYTES = 450L * 1024L * 1024L;
     private OfflineModelManager() {}
     public interface Progress { void onProgress(long done, long total); }
