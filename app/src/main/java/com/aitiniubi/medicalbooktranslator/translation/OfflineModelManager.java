@@ -88,6 +88,21 @@ public final class OfflineModelManager {
 
     public static String lastSelfTestError() { return lastSelfTestError; }
 
+    public static long minModelBytes() { return MIN_MODEL_BYTES; }
+    public static long expectedModelBytes() { return EXPECTED_MODEL_BYTES; }
+
+    public static void ensureFreeSpaceForImport(Context c, long modelBytes) throws IOException {
+        if (modelBytes <= 0) modelBytes = EXPECTED_MODEL_BYTES;
+        ensureFreeSpace(c, modelBytes);
+    }
+
+    public static void deleteModel(Context c) {
+        File f = model(c); if (f.exists()) f.delete();
+        File p = partial(c); if (p.exists()) p.delete();
+        selfTestReady = null;
+        lastSelfTestError = "";
+    }
+
     public static long partialBytes(Context c) {
         File f = partial(c);
         return f.isFile() ? f.length() : 0L;
