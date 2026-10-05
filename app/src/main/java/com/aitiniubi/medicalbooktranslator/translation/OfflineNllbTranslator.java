@@ -55,7 +55,7 @@ public final class OfflineNllbTranslator {
                 "exitCode="+result.exitCode+" binary="+result.binaryPath+" abi="+result.abi
                 +" rawTail="+tail(result.rawOutput));
         if(result.exitCode!=0)throw engineFailure(result,"self-test");
-        if(!result.rawOutput.matches("(?s).*\\p{InCJKUnifiedIdeographs}.*|.*[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ].*")) {
+        if(!result.rawOutput.matches("(?s).*[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ].*")) {
             throw new EngineException("NLLB self-test không tạo ra bản dịch tiếng Việt. rawTail="+tail500(result.rawOutput));
         }
         return result;
