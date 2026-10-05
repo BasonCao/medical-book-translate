@@ -1,0 +1,127 @@
+name: NLLB Engine Compatibility Test
+# rerun after NLLB ownership fix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/offline-pdf-epub]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1
+
+      - name: Inspect pinned fork source and native CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/llama-nllb" "$RUNNER_TEMP/llama-nllb.tar.gz"
+          curl -L --fail --retry 3 "https://github.com/drizzt/llama.cpp/archive/d836a39f379204b9e96ece3547477854f181eb8b.tar.gz" -o "$RUNNER_TEMP/llama-nllb.tar.gz"
+          mkdir -p "$RUNNER_TEMP/llama-nllb"
+          tar -xzf "$RUNNER_TEMP/llama-nllb.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/llama-nllb"
+          cd "$RUNNER_TEMP/llama-nllb"
+          echo '=== pinned fork commit ==='
+          echo 'd836a39f379204b9e96ece3547477854f181eb8b'
+          echo '=== ls examples ==='
+          ls examples | head -80
+          echo '=== nllb files ==='
+          grep -rn -i 'nllb' common include src examples --include='*.h' --include='*.cpp' --include='*.txt' -l | head -50 || true
+          echo '=== LLM_ARCH_ ==='
+          if [ -f src/llama-arch.cpp ]; then
+            grep -n 'LLM_ARCH_' src/llama-arch.cpp | head -200 || true
+          else
+            echo 'src/llama-arch.cpp does not exist; searching LLM_ARCH_NAMES'
+            grep -rn 'LLM_ARCH_NAMES' src include || true
+          fi
+          echo '=== native/nllb.cpp CLI ==='
+          cp "$GITHUB_WORKSPACE/native/nllb.cpp" examples/nllb/nllb.cpp
+          sed -n '1,220p' examples/nllb/nllb.cpp
+
+      - name: Validate workflow YAML
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/nllb-engine-test.yml'))"
+
+      - name: Build native llama-nllb
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/llama-nllb"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+          cmake --build build --target llama-nllb --parallel 2
+          test -x ./build/bin/llama-nllb
+          ./build/bin/llama-nllb --help || true
+
+      - name: Download NLLB model B
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/models"
+          MODEL_URL="https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf"
+          MODEL_PATH="$RUNNER_TEMP/models/nllb-600m.gguf"
+          if ! curl -L --fail --retry 3 --retry-delay 2 "$MODEL_URL" -o "$MODEL_PATH"; then
+            echo '=== Hugging Face model metadata ==='
+            curl -L --fail "https://huggingface.co/api/models/acceldium/nllb-200-distilled-600M-GGUF"
+            echo
+            echo '=== Siblings ==='
+            curl -L --fail "https://huggingface.co/api/models/acceldium/nllb-200-distilled-600M-GGUF" | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(x.get("rfilename","")) for x in d.get("siblings",[])]'
+            exit 1
+          fi
+          echo '=== ls -la $RUNNER_TEMP/models ==='
+          ls -la "$RUNNER_TEMP/models"
+
+      - name: Test model B - acceldium - greedy 1
+        shell: bash
+        run: |
+
+          set +e
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80
+          rc=${PIPESTATUS[0]}
+          echo "EXIT CODE: $rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::llama-nllb exited with code $rc"
+            exit "$rc"
+          fi
+
+      - name: Test model B - acceldium - greedy 2
+        shell: bash
+        run: |
+
+          set +e
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80
+          rc=${PIPESTATUS[0]}
+          echo "EXIT CODE: $rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::llama-nllb exited with code $rc"
+            exit "$rc"
+          fi
+
+      - name: Test model B - acceldium - beam 4
+        continue-on-error: true
+        shell: bash
+        run: |
+
+          set +e
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80 --beam-size 4
+          rc=${PIPESTATUS[0]}
+          echo "EXIT CODE: $rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::llama-nllb exited with code $rc"
+            exit "$rc"
+          fi

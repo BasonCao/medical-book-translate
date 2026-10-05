@@ -13,6 +13,53 @@ public final class OfflineNllbTranslator {
     private static final Pattern MARKUP=Pattern.compile("<!--.*?-->|<[^>]+>|&(?:#[0-9]+|#x[0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]+);|__MBT_MARKUP_\\d+__",Pattern.CASE_INSENSITIVE|Pattern.DOTALL);
     private static final Pattern LETTER=Pattern.compile(".*\\p{L}.*",Pattern.DOTALL);
     private static final Object ENGINE_LOCK=new Object();
+
+    public static final class EngineResult {
+        public final int exitCode;
+        public final String rawOutput;
+        public final String binaryPath;
+        public final String abi;
+        EngineResult(int exitCode,String rawOutput,String binaryPath,String abi){
+            this.exitCode=exitCode;this.rawOutput=rawOutput;this.binaryPath=binaryPath;this.abi=abi;
+        }
+    }
+
+    public static final class EngineException extends IOException {
+        public EngineException(String message){super(message);}
+        public EngineException(String message,Throwable cause){super(message,cause);}
+    }
+
+    public static boolean isOfflineProvider(List<TranslationRouter.Provider> providers){
+        if(providers==null)return false;
+        for(TranslationRouter.Provider p:providers){
+            if(p!=null&&p.config!=null&&p.config.endpoint!=null&&p.config.endpoint.startsWith("offline://nllb"))return true;
+        }
+        return false;
+    }
+
+    public static boolean isEngineError(Throwable error){
+        Throwable t=error;
+        while(t!=null){
+            if(t instanceof EngineException)return true;
+            t=t.getCause();
+        }
+        return false;
+    }
+
+    public static EngineResult selfTest(Context context,File workspace)throws Exception{
+        String ready=OfflineModelManager.readinessError(context);
+        if(!ready.isEmpty())throw new EngineException(ready);
+        EngineResult result=execute(context,OfflineModelManager.model(context),"Hello",60000L);
+        TranslationLogger logger=workspace==null?TranslationLogger.current():new TranslationLogger(workspace);
+        if(logger!=null)logger.event("OFFLINE_SELF_TEST",
+                "exitCode="+result.exitCode+" binary="+result.binaryPath+" abi="+result.abi
+                +" rawTail="+tail(result.rawOutput));
+        if(result.exitCode!=0)throw engineFailure(result,"self-test");
+        if(!result.rawOutput.matches("(?s).*[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ].*")) {
+            throw new EngineException("NLLB self-test không tạo ra bản dịch tiếng Việt. rawTail="+tail500(result.rawOutput));
+        }
+        return result;
+    }
     private OfflineNllbTranslator(){}
     public static String translateBatchPrompt(Context context,String prompt,String model)throws Exception{
         if(!OfflineModelManager.isReady(context))throw new IOException("Model offline NLLB chưa được cài đặt.");
@@ -45,10 +92,12 @@ public final class OfflineNllbTranslator {
             StringBuilder out=new StringBuilder();
             for(int i=0;i<ids.size();i++){
                 int end=i+1<starts.size()?mmStartForNext(marker,prompt,starts.get(i)):prompt.length();
-                String source=prompt.substring(starts.get(i),end).trim();
-                String translated=translatePreservingMarkup(context,source,OfflineModelManager.model(context));
-                if(i>0)out.append("\\n");
-                out.append("[[[UNIT_").append(ids.get(i)).append("]]]\\n").append(translated);
+                String rawSource=prompt.substring(starts.get(i),end).trim();
+                String source=normalizePdfUnit(rawSource);
+                String translated=hasTranslatablePdfText(source)
+                        ? translatePlainText(context,source) : rawSource;
+                if(i>0)out.append("\n");
+                out.append("[[[UNIT_").append(ids.get(i)).append("]]]\n").append(translated);
             }
             return out.toString();
         }
@@ -116,10 +165,38 @@ public final class OfflineNllbTranslator {
         return out;
     }
 
+    private static String normalizePdfUnit(String source){
+        if(source==null)return "";
+        String x=source.replace("\\n","\n").replace("\\\\n","\n").replace("\r\n","\n").replace("\r","\n").trim();
+        x=x.replaceAll("(?<=\\p{L})-\\n(?=\\p{L})","");
+        x=x.replaceAll("[ \\t]*\\n[ \\t]*"," ");
+        x=x.replaceAll("\\s+"," ").trim();
+        return x;
+    }
+
+    private static boolean hasTranslatablePdfText(String source){
+        return source!=null&&source.matches("(?s).*\\p{L}.*");
+    }
+
     private static int mmStartForNext(Pattern marker,String prompt,int after){
         Matcher m=marker.matcher(prompt);
         if(m.find(after))return m.start();
         return prompt.length();
+    }
+
+    public static String translatePlainText(Context context,String source)throws Exception{
+        if(!OfflineModelManager.isReady(context))throw new EngineException(OfflineModelManager.readinessError(context));
+        if(source==null||source.trim().isEmpty())return "";
+        String x=source.replace("\\n","\n").replace("\r\n","\n").replace("\r","\n");
+        x=x.replaceAll("(?<=\\p{L})-\\n(?=\\p{L})","");
+        x=x.replaceAll("[ \\t]*\\n[ \\t]*"," ").replaceAll("\\s+"," ").trim();
+        return translateTextChunk(context,x,OfflineModelManager.model(context));
+    }
+
+    public static String translateTextFragment(Context context,String source)throws Exception{
+        if(!OfflineModelManager.isReady(context))throw new EngineException(OfflineModelManager.readinessError(context));
+        if(source==null||source.trim().isEmpty())return "";
+        return translatePreservingMarkup(context,source,OfflineModelManager.model(context));
     }
 
     private static String translatePreservingMarkup(Context c,String html,File model)throws Exception{
@@ -135,23 +212,121 @@ public final class OfflineNllbTranslator {
         return out.toString();
     }
     private static List<String> splitLongText(String text){
-        if(text.length()<=1400)return Collections.singletonList(text);
-        List<String> out=new ArrayList<>();String[] sentences=text.split("(?<=[.!?;:])\\s+");StringBuilder cur=new StringBuilder();
-        for(String s:sentences){if(cur.length()>0&&cur.length()+s.length()+1>1400){out.add(cur.toString());cur.setLength(0);}if(cur.length()>0)cur.append(' ');cur.append(s);}
-        if(cur.length()>0)out.add(cur.toString());if(out.isEmpty())out.add(text);return out;
-    }
-    private static String run(Context c,File model,String text)throws Exception{
-        File exe=OfflineModelManager.binary(c);if(!exe.isFile()||!exe.canExecute())throw new IOException("NLLB engine chưa sẵn sàng.");
-        synchronized(ENGINE_LOCK){ ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),"-m",model.getAbsolutePath(),"-p",text,"-n","200","-t","4");pb.redirectErrorStream(true);
-        Process p=pb.start();ByteArrayOutputStream buf=new ByteArrayOutputStream();
-        try(InputStream in=p.getInputStream()){
-            byte[] b=new byte[8192];int n;long deadline=System.currentTimeMillis()+180000L;
-            while((n=in.read(b))>0){buf.write(b,0,n);if(System.currentTimeMillis()>deadline){p.destroyForcibly();throw new IOException("NLLB offline timeout (>180s).");}}
+        final int TARGET=280;
+        final int HARD_MAX=320;
+        List<String> sentences=splitSentencesForOffline(text);
+        List<String> out=new ArrayList<>();
+        StringBuilder current=new StringBuilder();
+        for(String sentence:sentences){
+            String normalized=sentence.trim();
+            if(normalized.isEmpty())continue;
+            if(normalized.length()>HARD_MAX){
+                if(current.length()>0){out.add(current.toString().trim());current.setLength(0);}
+                splitOversizedSentence(normalized,TARGET,out);
+                continue;
+            }
+            if(current.length()>0&&current.length()+1+normalized.length()>TARGET){
+                out.add(current.toString().trim());
+                current.setLength(0);
+            }
+            if(current.length()>0)current.append(' ');
+            current.append(normalized);
         }
-        int code=p.waitFor();String raw=buf.toString(StandardCharsets.UTF_8.name()).trim();
-        if(code!=0)throw new IOException("NLLB offline engine exit="+code+"\n"+tail(raw));
-        String translated=extractTranslation(raw);if(translated.isEmpty())throw new IOException("NLLB offline không trả về bản dịch.\n"+tail(raw));return translated; }
+        if(current.length()>0)out.add(current.toString().trim());
+        if(out.isEmpty()&&!text.trim().isEmpty())out.add(text.trim());
+        return out;
     }
+
+    private static List<String> splitSentencesForOffline(String text){
+        List<String> out=new ArrayList<>();
+        if(text==null||text.trim().isEmpty())return out;
+        String s=text.replace("\r"," ").replace("\n"," ").replaceAll("\\s+"," ").trim();
+        String[] abbreviations={"Fig.","Figs.","et al.","vs.","e.g.","i.e.","Dr.","Mr.","Mrs.","Ms.","No.","Eq.","approx.","etc."};
+        Map<String,String> protectedDots=new LinkedHashMap<>();
+        for(int i=0;i<abbreviations.length;i++){
+            String key="__MBT_ABBR_"+i+"__";
+            s=s.replace(abbreviations[i],abbreviations[i].replace(".",key));
+            protectedDots.put(key,".");
+        }
+        String[] raw=s.split("(?<=[.!?])\\s+");
+        for(String part:raw){
+            String x=part;
+            for(Map.Entry<String,String> e:protectedDots.entrySet())x=x.replace(e.getKey(),e.getValue());
+            if(!x.trim().isEmpty())out.add(x.trim());
+        }
+        return out;
+    }
+
+    private static void splitOversizedSentence(String sentence,int target,List<String> out){
+        String remaining=sentence.trim();
+        while(remaining.length()>target){
+            int cut=-1;
+            for(int i=Math.min(target,remaining.length()-1);i>=Math.max(80,target-80);i--){
+                char ch=remaining.charAt(i);
+                if(Character.isWhitespace(ch)||ch==','||ch==';'||ch==':'){
+                    cut=i;break;
+                }
+            }
+            if(cut<=0)break;
+            out.add(remaining.substring(0,cut).trim());
+            remaining=remaining.substring(cut+1).trim();
+        }
+        if(!remaining.isEmpty())out.add(remaining);
+    }
+
+    private static String run(Context c,File model,String text)throws Exception{
+        EngineResult result=execute(c,model,text,180000L);
+        if(result.exitCode!=0)throw engineFailure(result,"translation");
+        String translated=extractTranslation(result.rawOutput);
+        if(translated.isEmpty())throw engineFailure(result,"translation produced no usable output");
+        return translated;
+    }
+
+    private static EngineResult execute(Context c,File model,String text,long timeoutMs)throws Exception{
+        String ready=OfflineModelManager.readinessError(c);
+        if(!ready.isEmpty())throw new EngineException(ready);
+        File exe=OfflineModelManager.binary(c);
+        String abi=android.os.Build.SUPPORTED_ABIS.length==0?"":android.os.Build.SUPPORTED_ABIS[0];
+        synchronized(ENGINE_LOCK){
+            ProcessBuilder pb=new ProcessBuilder(exe.getAbsolutePath(),"-m",model.getAbsolutePath(),
+                    "-p",text,"-n",String.valueOf(Math.min(512,Math.max(64,text.length()/2))),"-t","4");
+            pb.redirectErrorStream(true);
+            Process p;
+            try{p=pb.start();}
+            catch(IOException e){
+                EngineException failure=new EngineException("NLLB engine không thể khởi chạy. binary="+exe.getAbsolutePath()+" ABI="+abi+" lỗi="+e.getMessage(),e);
+                TranslationLogger logger=TranslationLogger.current();
+                if(logger!=null)logger.event("OFFLINE_ENGINE_ERROR","exec_failed binary="+exe.getAbsolutePath()+" abi="+abi+" detail="+tail(String.valueOf(e)));
+                throw failure;
+            }
+            ByteArrayOutputStream buf=new ByteArrayOutputStream();
+            try(InputStream in=p.getInputStream()){
+                byte[] b=new byte[8192];int n;long deadline=System.currentTimeMillis()+timeoutMs;
+                while((n=in.read(b))>0){
+                    buf.write(b,0,n);
+                    if(System.currentTimeMillis()>deadline){
+                        p.destroyForcibly();
+                        String raw=buf.toString(StandardCharsets.UTF_8.name());
+                        EngineException failure=new EngineException("NLLB engine timeout. binary="+exe.getAbsolutePath()+" ABI="+abi+" rawTail="+tail(raw));
+                        TranslationLogger logger=TranslationLogger.current();
+                        if(logger!=null)logger.event("OFFLINE_ENGINE_ERROR","timeout binary="+exe.getAbsolutePath()+" abi="+abi+" rawTail="+tail(raw));
+                        throw failure;
+                    }
+                }
+            }
+            int code=p.waitFor();
+            String raw=buf.toString(StandardCharsets.UTF_8.name()).trim();
+            return new EngineResult(code,raw,exe.getAbsolutePath(),abi);
+        }
+    }
+
+    private static EngineException engineFailure(EngineResult result,String stage){
+        String message="NLLB engine lỗi ở "+stage+": exitCode="+result.exitCode+" binary="+result.binaryPath+" ABI="+result.abi+" rawTail="+tail(result.rawOutput);
+        TranslationLogger logger=TranslationLogger.current();
+        if(logger!=null)logger.event("OFFLINE_ENGINE_ERROR","exitCode="+result.exitCode+" binary="+result.binaryPath+" abi="+result.abi+" rawTail="+tail(result.rawOutput));
+        return new EngineException(message);
+    }
+
     private static String extractTranslation(String raw){
         String[] lines=raw.split("\\R");String candidate="";
         for(String line:lines){String s=line.trim();if(s.isEmpty())continue;String lower=s.toLowerCase(Locale.US);
@@ -161,4 +336,5 @@ public final class OfflineNllbTranslator {
         }return candidate;
     }
     private static String tail(String s){return s.length()<=1000?s:s.substring(s.length()-1000);}
+    private static String tail500(String s){return s.length()<=500?s:s.substring(s.length()-500);}
 }

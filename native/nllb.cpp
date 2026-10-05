@@ -183,7 +183,6 @@ int main(int argc, char ** argv) {
         fputc('\n', stdout);
     }
 
-    llama_free(ctx);
-    llama_model_free(model);
+    fflush(stdout);
     return 0;
 }

@@ -45,7 +45,7 @@ public class MainActivity extends Activity {
     private static final String PREF_FREE_POOL="free_ai_pool";
     private static final String PREF_ALLOW_PAID="allow_paid_fallback";
     private static final String OFFLINE_PROVIDER="Offline NLLB-600M";
-    private static final String OFFLINE_MODEL_ID="nllb-600m-Q4_0";
+    private static final String OFFLINE_MODEL_ID="nllb-600m-f16";
     private static final int REQ_OFFLINE_MODEL=1907;
 
     private TextView status,report;
@@ -64,6 +64,7 @@ public class MainActivity extends Activity {
         TextView appTitle=findViewById(R.id.appTitle);
         appTitle.setText("Medical Book Translator V1.13.0");
         prefsHolder=getSharedPreferences("config",MODE_PRIVATE);
+        OfflineModelManager.cleanupLegacyModel(this);
         status=findViewById(R.id.status);
         report=findViewById(R.id.report);
         progress=findViewById(R.id.progress);
@@ -89,7 +90,10 @@ public class MainActivity extends Activity {
         pdfLayout.setOnClickListener(v->choosePdfLayoutAndTranslate(fallbackProviders()));
         pdfOneColumn.setOnClickListener(v->startPdfWithLayout(true));
         pdfKeepLayout.setOnClickListener(v->startPdfWithLayout(false));
-        if(offlineButton!=null) offlineButton.setOnClickListener(v->manageOfflineModel());
+        if(offlineButton!=null) offlineButton.setOnClickListener(v->{
+            if(OfflineModelManager.isReady(this)) runOfflineSelfTest();
+            else manageOfflineModel();
+        });
         updateOfflineButton();
         updatePdfLayoutButtons();
         reset.setOnClickListener(v->resetProgress());
@@ -141,7 +145,8 @@ public class MainActivity extends Activity {
                     try(android.content.res.AssetFileDescriptor afd=getContentResolver().openAssetFileDescriptor(uri,"r")){
                         if(afd!=null)expected=afd.getLength();
                     }
-                    if(expected>0 && expected<450L*1024L*1024L)throw new IOException("File model quá nhỏ: "+(expected/(1024*1024))+" MB.");
+                    if(expected>0 && expected<OfflineModelManager.minModelBytes())throw new IOException("File model quá nhỏ: "+(expected/(1024*1024))+" MB. Cần model NLLB khoảng 1,8 GB.");
+                    OfflineModelManager.ensureFreeSpaceForImport(this, expected > 0 ? expected : OfflineModelManager.expectedModelBytes());
                     try(InputStream in=getContentResolver().openInputStream(uri)){
                         if(in==null)throw new IOException("Không mở được file model đã chọn.");
                         try(OutputStream out=new BufferedOutputStream(new FileOutputStream(tmp,false))){
@@ -157,10 +162,14 @@ public class MainActivity extends Activity {
                             }
                         }
                     }
-                    if(tmp.length()<450L*1024L*1024L)throw new IOException("File model chưa đủ kích thước Q4_0: "+(tmp.length()/(1024*1024))+" MB.");
+                    if(tmp.length()<OfflineModelManager.minModelBytes())throw new IOException("File model chưa đủ kích thước NLLB ~1,8 GB: "+(tmp.length()/(1024*1024))+" MB.");
                     if(dst.exists() && !dst.delete())throw new IOException("Không thay thế được model cũ.");
                     if(!tmp.renameTo(dst))throw new IOException("Không thể hoàn tất việc nhập model.");
-                    if(!OfflineModelManager.isReady(this))throw new IOException("Model đã nhập nhưng engine offline chưa sẵn sàng.");
+                    if(!OfflineModelManager.isReady(this)){
+                        String detail=OfflineModelManager.lastSelfTestError();
+                        OfflineModelManager.deleteModel(this);
+                        throw new IOException("Self-test NLLB thất bại. Model vừa nhập đã bị xóa. 500 ký tự cuối output engine:\n"+detail);
+                    }
                     prefsHolder.edit().putBoolean("offline_enabled",true).apply();
                     runOnUiThread(()->{
                         progress.setVisibility(View.GONE);
@@ -826,8 +835,31 @@ public class MainActivity extends Activity {
         }else if(OfflineModelManager.isModelReady(this)){
             offlineButton.setText("🧠 Kích hoạt engine OFFLINE NLLB");
         }else{
-            offlineButton.setText("🧠 Tải model OFFLINE NLLB 600M (~495 MB)");
+            offlineButton.setText("🧠 Tải model OFFLINE NLLB 600M (~1,8 GB)");
         }
+    }
+
+    private void runOfflineSelfTest(){
+        if(offlineButton!=null)offlineButton.setEnabled(false);
+        new Thread(()->{
+            try{
+                OfflineNllbTranslator.EngineResult r=OfflineNllbTranslator.selfTest(this,workspace);
+                String msg="Engine OFFLINE tự kiểm tra thành công.\n\n"
+                        +"Exit code: "+r.exitCode+"\nABI: "+r.abi+"\nBinary: "+r.binaryPath+"\n\nRaw output:\n"+r.rawOutput;
+                runOnUiThread(()->{
+                    if(offlineButton!=null)offlineButton.setEnabled(true);
+                    new AlertDialog.Builder(this).setTitle("OFFLINE NLLB self-test")
+                            .setMessage(msg).setPositiveButton("OK",null).show();
+                });
+            }catch(Exception e){
+                String msg=e.getMessage()==null?e.toString():e.getMessage();
+                runOnUiThread(()->{
+                    if(offlineButton!=null)offlineButton.setEnabled(true);
+                    new AlertDialog.Builder(this).setTitle("OFFLINE NLLB self-test thất bại")
+                            .setMessage(msg).setPositiveButton("OK",null).show();
+                });
+            }
+        },"offline-self-test").start();
     }
 
     private void manageOfflineModel(){
@@ -845,7 +877,7 @@ public class MainActivity extends Activity {
         }
         new AlertDialog.Builder(this)
             .setTitle("Dịch offline NLLB-200 600M")
-            .setMessage("Model Q4_0 khoảng 495 MB. APK không chứa model nên file cài đặt vẫn nhẹ. Sau khi tải xong, dịch có thể chạy không cần Internet/API key.\n\nNếu Hugging Face trả HTTP 401/403, bạn có thể tải file bằng Chrome rồi chọn \"Nhập model\"; app vẫn kiểm tra kích thước và giữ model trong bộ nhớ riêng.")
+            .setMessage("Model NLLB khoảng 1,8 GB. APK không chứa model nên file cài đặt vẫn nhẹ. App yêu cầu dung lượng trống ít nhất 2× kích thước model trước khi tải. Sau khi tải xong, app tự chạy self-test \"Hello\"; nếu engine lỗi, model vừa tải sẽ bị xóa và hiển thị 500 ký tự cuối output engine.\n\nNếu Hugging Face trả HTTP 401/403, bạn có thể tải file bằng Chrome rồi chọn \"Nhập model\"; app vẫn kiểm tra kích thước và self-test trước khi kích hoạt.")
             .setNegativeButton("Hủy",null)
             .setNeutralButton("Nhập model", (d,w)->pickOfflineModel())
             .setPositiveButton("Tải model", (d,w)->downloadOfflineModel())
@@ -863,10 +895,14 @@ public class MainActivity extends Activity {
             try{
                 OfflineModelManager.downloadModel(this,(done,total)->{
                     int p=total>0?(int)Math.min(100,(done*100L)/total):0;
-                    runOnUiThread(()->{progress.setProgress(p);report.setText("⬇ Tải model offline: "+p+"%\n"+(done/(1024*1024))+" / "+(total>0?total/(1024*1024):0)+" MB");});
+                    runOnUiThread(()->{progress.setProgress(p);report.setText("⬇ Tải model offline ~1,8 GB: "+p+"%\n"+(done/(1024*1024))+" / "+(total>0?total/(1024*1024):0)+" MB");});
                 });
                 boolean ready=OfflineModelManager.isReady(this);
-                if(!ready)throw new IOException("Model đã tải nhưng engine NLLB chưa sẵn sàng.");
+                if(!ready){
+                    String detail=OfflineModelManager.lastSelfTestError();
+                    OfflineModelManager.deleteModel(this);
+                    throw new IOException("Self-test NLLB thất bại. Model vừa tải đã bị xóa. 500 ký tự cuối output engine:\n"+detail);
+                }
                 prefsHolder.edit().putBoolean("offline_enabled",true).apply();
                 runOnUiThread(()->{progress.setVisibility(View.GONE);if(offlineButton!=null)offlineButton.setEnabled(true);updateOfflineButton();report.setText("✅ Dịch OFFLINE NLLB-600M đã sẵn sàng.\nKhông cần Internet/API key khi dịch.");});
             }catch(Exception e){
@@ -891,7 +927,7 @@ public class MainActivity extends Activity {
 
     private void openOfflineModelPage(){
         try{
-            Intent i=new Intent(Intent.ACTION_VIEW, Uri.parse("https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf"));
+            Intent i=new Intent(Intent.ACTION_VIEW, Uri.parse("https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF"));
             startActivity(i);
         }catch(Exception ignored){}
     }
@@ -900,7 +936,7 @@ public class MainActivity extends Activity {
         String msg=e.getMessage()==null?e.toString():e.getMessage();
         new AlertDialog.Builder(this)
             .setTitle("Không tải được model NLLB")
-            .setMessage("Nguồn model đang trả HTTP 401/403 cho tải trực tiếp từ app. Đây là lỗi quyền truy cập của máy chủ, không phải lỗi file APK.\n\nCách chắc chắn nhất:\n1. Mở trang model bằng Chrome.\n2. Tải nllb-600m-Q4_0.gguf (~495 MB).\n3. Quay lại app → Dịch offline → Nhập model.\n\nFile sẽ được sao chép vào bộ nhớ riêng của app và không cần tải lại mỗi lần dịch.\n\nChi tiết: "+msg)
+            .setMessage("Nguồn model đang trả HTTP 401/403 cho tải trực tiếp từ app. Đây là lỗi quyền truy cập của máy chủ, không phải lỗi file APK.\n\nCách chắc chắn nhất:\n1. Mở trang model bằng Chrome.\n2. Tải nllb-600m.gguf (~1,8 GB).\n3. Quay lại app → Dịch offline → Nhập model.\n\nFile sẽ được sao chép vào bộ nhớ riêng của app và không cần tải lại mỗi lần dịch.\n\nChi tiết: "+msg)
             .setNegativeButton("Đóng",null)
             .setNeutralButton("Mở trang model",(d,w)->openOfflineModelPage())
             .setPositiveButton("Nhập file",(d,w)->pickOfflineModel())
