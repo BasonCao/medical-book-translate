@@ -46,6 +46,12 @@ jobs:
           cp "$GITHUB_WORKSPACE/native/nllb.cpp" examples/nllb/nllb.cpp
           sed -n '1,220p' examples/nllb/nllb.cpp
 
+      - name: Validate workflow YAML
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/nllb-engine-test.yml'))"
+
       - name: Build native llama-nllb
         shell: bash
         run: |
@@ -112,7 +118,7 @@ jobs:
           set +e
           cd "$RUNNER_TEMP/llama-nllb"
           BIN="./build/bin/llama-nllb"
-          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80 --beam-size 4
           rc=${PIPESTATUS[0]}
           echo "EXIT CODE: $rc"
           if [ "$rc" -ne 0 ]; then
