@@ -1,4 +1,5 @@
 name: NLLB Engine Compatibility Test
+# rerun after NLLB ownership fix
 
 on:
   workflow_dispatch:
