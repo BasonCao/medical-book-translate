@@ -74,38 +74,48 @@ jobs:
           echo '=== ls -la $RUNNER_TEMP/models ==='
           ls -la "$RUNNER_TEMP/models"
 
-      - name: Test model B - acceldium
-        continue-on-error: true
+      - name: Test model B - acceldium - greedy 1
         shell: bash
         run: |
-          set +e
-          cd "$RUNNER_TEMP/llama-nllb"
-          BIN="./build/bin/llama-nllb"
-          LOG="$RUNNER_TEMP/model-B-acceldium.log"
-          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
-          rc=\$\{PIPESTATUS[0]\}
-          echo "--- EXIT CODE ---"
-          echo "$rc"
-          echo "--- GENERAL.ARCHITECTURE ---"
-          grep -i -m 5 'general.architecture' "$LOG" || echo "(not reported)"
-          echo "--- LAST 80 LINES ---"
-          tail -80 "$LOG"
-          exit 0
 
-      - name: Test model B - acceldium - sentence 2
-        continue-on-error: true
-        shell: bash
-        run: |
           set +e
           cd "$RUNNER_TEMP/llama-nllb"
           BIN="./build/bin/llama-nllb"
-          LOG="$RUNNER_TEMP/model-B-acceldium-sentence-2.log"
-          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
-          rc=\$\{PIPESTATUS[0]\}
-          echo "--- EXIT CODE ---"
-          echo "$rc"
-          echo "--- GENERAL.ARCHITECTURE ---"
-          grep -i -m 5 'general.architecture' "$LOG" || echo "(not reported)"
-          echo "--- LAST 80 LINES ---"
-          tail -80 "$LOG"
-          exit 0
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80
+          rc=${PIPESTATUS[0]}
+          echo "EXIT CODE: $rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::llama-nllb exited with code $rc"
+            exit "$rc"
+          fi
+
+      - name: Test model B - acceldium - greedy 2
+        shell: bash
+        run: |
+
+          set +e
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80
+          rc=${PIPESTATUS[0]}
+          echo "EXIT CODE: $rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::llama-nllb exited with code $rc"
+            exit "$rc"
+          fi
+
+      - name: Test model B - acceldium - beam 4
+        continue-on-error: true
+        shell: bash
+        run: |
+
+          set +e
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tail -80
+          rc=${PIPESTATUS[0]}
+          echo "EXIT CODE: $rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::llama-nllb exited with code $rc"
+            exit "$rc"
+          fi
