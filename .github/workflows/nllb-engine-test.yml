@@ -9,12 +9,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1
 
       - name: Inspect pinned fork source and native CLI
         shell: bash
@@ -47,8 +51,8 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/llama-nllb"
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF
-          cmake --build build --target llama-nllb -j
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+          cmake --build build --target llama-nllb --parallel 2
           test -x ./build/bin/llama-nllb
           ./build/bin/llama-nllb --help || true
 
@@ -61,30 +65,38 @@ jobs:
           curl -L --fail --retry 3 --retry-delay 2 "https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf" -o "$RUNNER_TEMP/models/acceldium-nllb-600m.gguf"
           ls -lh "$RUNNER_TEMP/models"
 
-      - name: Test both models and report architecture, exit code, translation
+      - name: Test model A - Hosstia
+        continue-on-error: true
         shell: bash
         run: |
-          set -uo pipefail
+          set +e
           cd "$RUNNER_TEMP/llama-nllb"
           BIN="./build/bin/llama-nllb"
-          run_model() {
-            local label="$1"
-            local model="$2"
-            local log="$RUNNER_TEMP/${label}.log"
-            echo "============================================================"
-            echo "MODEL: $label"
-            echo "PATH: $model"
-            echo "============================================================"
-            set +e
-            "$BIN" -m "$model" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$log"
-            local rc=${PIPESTATUS[0]}
-            set -e
-            echo "--- EXIT CODE ---"
-            echo "$rc"
-            echo "--- GENERAL.ARCHITECTURE ---"
-            grep -i -m 5 'general.architecture' "$log" || echo "(not reported)"
-            echo "--- LAST 80 LINES ---"
-            tail -80 "$log"
-          }
-          run_model "model-A-Hosstia" "$RUNNER_TEMP/models/Hosstia-nllb-600m-Q4_0.gguf"
-          run_model "model-B-acceldium" "$RUNNER_TEMP/models/acceldium-nllb-600m.gguf"
+          LOG="$RUNNER_TEMP/model-A-Hosstia.log"
+          "$BIN" -m "$RUNNER_TEMP/models/Hosstia-nllb-600m-Q4_0.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          echo "--- EXIT CODE ---"
+          echo "$rc"
+          echo "--- GENERAL.ARCHITECTURE ---"
+          grep -i -m 5 'general.architecture' "$LOG" || echo "(not reported)"
+          echo "--- LAST 80 LINES ---"
+          tail -80 "$LOG"
+          exit 0
+
+      - name: Test model B - acceldium
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+          LOG="$RUNNER_TEMP/model-B-acceldium.log"
+          "$BIN" -m "$RUNNER_TEMP/models/acceldium-nllb-600m.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          echo "--- EXIT CODE ---"
+          echo "$rc"
+          echo "--- GENERAL.ARCHITECTURE ---"
+          grep -i -m 5 'general.architecture' "$LOG" || echo "(not reported)"
+          echo "--- LAST 80 LINES ---"
+          tail -80 "$LOG"
+          exit 0
