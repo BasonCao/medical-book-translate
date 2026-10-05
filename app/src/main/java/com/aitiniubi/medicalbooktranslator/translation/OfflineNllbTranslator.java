@@ -55,6 +55,9 @@ public final class OfflineNllbTranslator {
                 "exitCode="+result.exitCode+" binary="+result.binaryPath+" abi="+result.abi
                 +" rawTail="+tail(result.rawOutput));
         if(result.exitCode!=0)throw engineFailure(result,"self-test");
+        if(!result.rawOutput.matches("(?s).*\\p{InCJKUnifiedIdeographs}.*|.*[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ].*")) {
+            throw new EngineException("NLLB self-test không tạo ra bản dịch tiếng Việt. rawTail="+tail500(result.rawOutput));
+        }
         return result;
     }
     private OfflineNllbTranslator(){}
@@ -333,4 +336,5 @@ public final class OfflineNllbTranslator {
         }return candidate;
     }
     private static String tail(String s){return s.length()<=1000?s:s.substring(s.length()-1000);}
+    private static String tail500(String s){return s.length()<=500?s:s.substring(s.length()-500);}
 }
