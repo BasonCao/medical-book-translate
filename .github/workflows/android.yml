@@ -46,6 +46,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/llama-nllb"
           tar -xzf "$RUNNER_TEMP/llama-nllb.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/llama-nllb"
           cd "$RUNNER_TEMP/llama-nllb"
+          echo "=== pinned fork architecture strings ==="
+          grep -n -i '"nllb"\|"mbart"\|"m2m100"' src/llama-arch.cpp || true
+          echo "=== pinned fork architecture symbols ==="
+          grep -rn -i 'LLM_ARCH_NLLB\|LLM_ARCH_MBART' src | head -20 || true
           cp "$GITHUB_WORKSPACE/native/nllb.cpp" examples/nllb/nllb.cpp
 
           NDK="$ANDROID_HOME/ndk/27.2.12479018"
