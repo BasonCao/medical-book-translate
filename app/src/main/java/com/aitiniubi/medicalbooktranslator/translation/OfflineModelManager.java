@@ -13,25 +13,25 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 
 /**
- * Manages the optional on-device NLLB-200 distilled 600M Q4_0 model.
+ * Manages the optional on-device NLLB-200 distilled 600M model.
  *
  * The model is deliberately NOT bundled into the APK. Only the ARM64
  * nllb-simple engine is bundled. The model is downloaded into app-private
  * storage and can be resumed after an interrupted download.
  */
 public final class OfflineModelManager {
-    public static final String MODEL_FILE = "nllb-600m-Q4_0.gguf";
+    public static final String MODEL_FILE = "nllb-600m-f16.gguf";
     public static final String BINARY_FILE = "nllb-simple";
 
-    // Public model documented by the upstream model card as the mobile Q4_0 build (~495 MB).
     public static final String MODEL_URL =
-            "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf?download=true";
-    public static final String MODEL_URL_FALLBACK =
-            "https://hf-mirror.com/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf?download=true";
+            "https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf?download=true";
 
-    private static final long MIN_MODEL_BYTES = 450L * 1024L * 1024L;
-    private static final long EXPECTED_MODEL_BYTES = 495L * 1024L * 1024L;
+    // The verified model is ~1.64 GiB (1,678 MiB). Keep a safety floor to reject the old Q4_0 model.
+    private static final long MIN_MODEL_BYTES = 1_600L * 1024L * 1024L;
+    private static final long EXPECTED_MODEL_BYTES = 1_800L * 1000L * 1000L;
     private static final String BINARY_ASSET = "offline-engine/nllb-simple";
+    private static volatile Boolean selfTestReady = null;
+    private static volatile String lastSelfTestError = "";
 
     private OfflineModelManager() {}
 
@@ -79,13 +79,35 @@ public final class OfflineModelManager {
         return f.isFile() && f.length() >= MIN_MODEL_BYTES;
     }
 
+    public static void cleanupLegacyModel(Context c) {
+        File legacy = new File(root(c), "nllb-600m-Q4_0.gguf");
+        if (legacy.exists()) legacy.delete();
+        File legacyPart = new File(root(c), "nllb-600m-Q4_0.gguf.part");
+        if (legacyPart.exists()) legacyPart.delete();
+    }
+
+    public static String lastSelfTestError() { return lastSelfTestError; }
+
     public static long partialBytes(Context c) {
         File f = partial(c);
         return f.isFile() ? f.length() : 0L;
     }
 
     public static boolean isReady(Context c) {
-        return readinessError(c).isEmpty();
+        String basic = readinessError(c);
+        if (!basic.isEmpty()) return false;
+        if (Boolean.TRUE.equals(selfTestReady)) return true;
+        try {
+            OfflineNllbTranslator.selfTest(c, null);
+            selfTestReady = true;
+            lastSelfTestError = "";
+            return true;
+        } catch (Exception e) {
+            selfTestReady = false;
+            String msg = e.getMessage() == null ? e.toString() : e.getMessage();
+            lastSelfTestError = tail500(msg);
+            return false;
+        }
     }
 
     public static boolean ensureBinary(Context c) {
@@ -108,6 +130,9 @@ public final class OfflineModelManager {
         }
 
         if (isModelReady(c)) return;
+
+        long remoteSize = probeRemoteSize(c);
+        ensureFreeSpace(c, remoteSize);
 
         File tmp = partial(c);
         File dst = model(c);
@@ -136,7 +161,7 @@ public final class OfflineModelManager {
                 .build();
 
         IOException last = null;
-        String[] urls = new String[]{MODEL_URL, MODEL_URL_FALLBACK};
+        String[] urls = new String[]{MODEL_URL};
 
         for (String url : urls) {
             long existing = tmp.isFile() ? tmp.length() : 0L;
@@ -195,12 +220,18 @@ public final class OfflineModelManager {
                 }
 
                 if (tmp.length() >= MIN_MODEL_BYTES) {
+                    if (tmp.length() < remoteSize) {
+                        last = new IOException("Model tải chưa đủ: " + tmp.length() + " / " + remoteSize + " bytes.");
+                        continue;
+                    }
                     if (dst.exists() && !dst.delete()) {
                         throw new IOException("Không thay thế được model cũ.");
                     }
                     if (!tmp.renameTo(dst)) {
                         throw new IOException("Không thể hoàn tất cài model offline.");
                     }
+                    selfTestReady = null;
+                    lastSelfTestError = "";
                     return;
                 }
 
@@ -216,6 +247,32 @@ public final class OfflineModelManager {
                         + (last != null ? last.getMessage() : ""));
     }
 
+    private static long probeRemoteSize(Context c) throws IOException {
+        OkHttpClient client = new OkHttpClient.Builder()
+                .connectTimeout(30, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
+                .followRedirects(true).followSslRedirects(true).build();
+        Request req = new Request.Builder().url(MODEL_URL).head().build();
+        try (Response res = client.newCall(req).execute()) {
+            if (!res.isSuccessful()) throw new IOException("HTTP " + res.code() + " khi kiểm tra kích thước model.");
+            long size = res.body() == null ? -1L : res.body().contentLength();
+            if (size < MIN_MODEL_BYTES) throw new IOException("Kích thước model từ server không hợp lệ: " + size + " bytes.");
+            return size;
+        }
+    }
+
+    private static void ensureFreeSpace(Context c, long modelBytes) throws IOException {
+        android.os.StatFs stat = new android.os.StatFs(c.getFilesDir().getAbsolutePath());
+        long free = stat.getAvailableBytes();
+        long required = modelBytes * 2L;
+        if (free < required) {
+            throw new IOException("Không đủ dung lượng trống. Cần ít nhất " + formatGb(required)
+                    + ", hiện có " + formatGb(free) + ".");
+        }
+    }
+
+    private static String formatGb(long bytes) { return String.format(Locale.US, "%.1f GB", bytes / 1_000_000_000.0); }
+    private static String tail500(String s) { return s.length() <= 500 ? s : s.substring(s.length() - 500); }
+
     public static String modelStatus(Context c) {
         if (isModelReady(c)) {
             return String.format(Locale.US, "%.0f MB",
@@ -228,6 +285,7 @@ public final class OfflineModelManager {
         }
         return "chưa tải";
     }
+
 
     private static long parseContentRangeTotal(String value) {
         try {
