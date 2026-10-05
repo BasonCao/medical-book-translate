@@ -56,32 +56,23 @@ jobs:
           test -x ./build/bin/llama-nllb
           ./build/bin/llama-nllb --help || true
 
-      - name: Download NLLB models
+      - name: Download NLLB model B
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/models"
-          curl -L --fail --retry 3 --retry-delay 2 "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf" -o "$RUNNER_TEMP/models/Hosstia-nllb-600m-Q4_0.gguf"
-          curl -L --fail --retry 3 --retry-delay 2 "https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf" -o "$RUNNER_TEMP/models/acceldium-nllb-600m.gguf"
-          ls -lh "$RUNNER_TEMP/models"
-
-      - name: Test model A - Hosstia
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          cd "$RUNNER_TEMP/llama-nllb"
-          BIN="./build/bin/llama-nllb"
-          LOG="$RUNNER_TEMP/model-A-Hosstia.log"
-          "$BIN" -m "$RUNNER_TEMP/models/Hosstia-nllb-600m-Q4_0.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
-          rc=${PIPESTATUS[0]}
-          echo "--- EXIT CODE ---"
-          echo "$rc"
-          echo "--- GENERAL.ARCHITECTURE ---"
-          grep -i -m 5 'general.architecture' "$LOG" || echo "(not reported)"
-          echo "--- LAST 80 LINES ---"
-          tail -80 "$LOG"
-          exit 0
+          MODEL_URL="https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf"
+          MODEL_PATH="$RUNNER_TEMP/models/nllb-600m.gguf"
+          if ! curl -L --fail --retry 3 --retry-delay 2 "$MODEL_URL" -o "$MODEL_PATH"; then
+            echo '=== Hugging Face model metadata ==='
+            curl -L --fail "https://huggingface.co/api/models/acceldium/nllb-200-distilled-600M-GGUF"
+            echo
+            echo '=== Siblings ==='
+            curl -L --fail "https://huggingface.co/api/models/acceldium/nllb-200-distilled-600M-GGUF" | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(x.get("rfilename","")) for x in d.get("siblings",[])]'
+            exit 1
+          fi
+          echo '=== ls -la $RUNNER_TEMP/models ==='
+          ls -la "$RUNNER_TEMP/models"
 
       - name: Test model B - acceldium
         continue-on-error: true
@@ -91,8 +82,26 @@ jobs:
           cd "$RUNNER_TEMP/llama-nllb"
           BIN="./build/bin/llama-nllb"
           LOG="$RUNNER_TEMP/model-B-acceldium.log"
-          "$BIN" -m "$RUNNER_TEMP/models/acceldium-nllb-600m.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
-          rc=${PIPESTATUS[0]}
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
+          rc=\$\{PIPESTATUS[0]\}
+          echo "--- EXIT CODE ---"
+          echo "$rc"
+          echo "--- GENERAL.ARCHITECTURE ---"
+          grep -i -m 5 'general.architecture' "$LOG" || echo "(not reported)"
+          echo "--- LAST 80 LINES ---"
+          tail -80 "$LOG"
+          exit 0
+
+      - name: Test model B - acceldium - sentence 2
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+          LOG="$RUNNER_TEMP/model-B-acceldium-sentence-2.log"
+          "$BIN" -m "$RUNNER_TEMP/models/nllb-600m.gguf" -p "Acute kidney injury is defined by an increase in serum creatinine." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$LOG"
+          rc=\$\{PIPESTATUS[0]\}
           echo "--- EXIT CODE ---"
           echo "$rc"
           echo "--- GENERAL.ARCHITECTURE ---"
