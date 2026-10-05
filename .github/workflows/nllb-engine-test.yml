@@ -1,0 +1,95 @@
+name: NLLB Engine Compatibility Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Inspect pinned fork source and native CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/llama-nllb" "$RUNNER_TEMP/llama-nllb.tar.gz"
+          curl -L --fail --retry 3 "https://github.com/drizzt/llama.cpp/archive/d836a39f379204b9e96ece3547477854f181eb8b.tar.gz" -o "$RUNNER_TEMP/llama-nllb.tar.gz"
+          mkdir -p "$RUNNER_TEMP/llama-nllb"
+          tar -xzf "$RUNNER_TEMP/llama-nllb.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/llama-nllb"
+          cd "$RUNNER_TEMP/llama-nllb"
+
+          echo '=== git log ==='
+          git log -1 --format='%H %s'
+          echo '=== ls examples ==='
+          ls examples | head -80
+          echo '=== nllb files ==='
+          grep -rn -i 'nllb' common include src examples --include='*.h' --include='*.cpp' --include='*.txt' -l | head -50 || true
+
+          echo '=== LLM_ARCH_ ==='
+          if [ -f src/llama-arch.cpp ]; then
+            grep -n 'LLM_ARCH_' src/llama-arch.cpp | head -200 || true
+          else
+            echo 'src/llama-arch.cpp does not exist; searching LLM_ARCH_NAMES'
+            grep -rn 'LLM_ARCH_NAMES' src include || true
+          fi
+
+          echo '=== native/nllb.cpp CLI ==='
+          cp "$GITHUB_WORKSPACE/native/nllb.cpp" examples/nllb/nllb.cpp
+          sed -n '1,220p' examples/nllb/nllb.cpp
+
+      - name: Build native llama-nllb
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/llama-nllb"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF
+          cmake --build build --target llama-nllb -j
+          test -x ./build/bin/llama-nllb
+          ./build/bin/llama-nllb --help || true
+
+      - name: Download NLLB models
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/models"
+          curl -L --fail --retry 3 --retry-delay 2             "https://huggingface.co/Hosstia/nllb-200-distilled-600m-gguf/resolve/main/nllb-600m-Q4_0.gguf"             -o "$RUNNER_TEMP/models/Hosstia-nllb-600m-Q4_0.gguf"
+          curl -L --fail --retry 3 --retry-delay 2             "https://huggingface.co/acceldium/nllb-200-distilled-600M-GGUF/resolve/main/nllb-600m.gguf"             -o "$RUNNER_TEMP/models/acceldium-nllb-600m.gguf"
+          ls -lh "$RUNNER_TEMP/models"
+
+      - name: Test both models and report architecture, exit code, translation
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/llama-nllb"
+          BIN="./build/bin/llama-nllb"
+
+          run_model() {
+            local label="$1"
+            local model="$2"
+            local log="$RUNNER_TEMP/${label}.log"
+
+            echo "============================================================"
+            echo "MODEL: $label"
+            echo "PATH: $model"
+            echo "============================================================"
+
+            set +e
+            "$BIN" -m "$model" -p "The patient presented with fever and cough." -sl eng_Latn -tl vie_Latn 2>&1 | tee "$log"
+            local rc=${PIPESTATUS[0]}
+            set -e
+
+            echo "--- EXIT CODE ---"
+            echo "$rc"
+            echo "--- GENERAL.ARCHITECTURE ---"
+            grep -i -m 5 'general.architecture' "$log" || echo "(not reported)"
+            echo "--- LAST 40 LINES ---"
+            tail -40 "$log"
+          }
+
+          run_model "model-A-Hosstia" "$RUNNER_TEMP/models/Hosstia-nllb-600m-Q4_0.gguf"
+          run_model "model-B-acceldium" "$RUNNER_TEMP/models/acceldium-nllb-600m.gguf"
